@@ -185,6 +185,7 @@
             'verify': 'fa-flask-vial',
             'critic': 'fa-gavel',
             'push': 'fa-code-branch',
+            'deploy': 'fa-rocket',
             'complete': 'fa-check-circle',
             'error': 'fa-triangle-exclamation'
         };
@@ -351,7 +352,23 @@
                                 if (data.status === "error" || data.status === "failed") statusColor = "text-red-400";
                                 if (data.status === "clean" || data.status === "success") statusColor = "text-emerald-400 font-bold";
 
-                                let contentHtml = `<span class="${statusColor}">[${data.step.toUpperCase()}]</span> ${data.message}`;
+                                let msg = data.message;
+                                if (data.step === 'diagnose' && msg.startsWith('[')) {
+                                    const endBracket = msg.indexOf(']');
+                                    if (endBracket > 0) {
+                                        const category = msg.substring(1, endBracket);
+                                        const rest = msg.substring(endBracket + 1).trim();
+                                        let badgeColor = "bg-blue-500/20 text-blue-400 border-blue-500/30"; // Default (Code Bug)
+                                        if (category.toLowerCase().includes("config") || category.toLowerCase().includes("infra")) {
+                                            badgeColor = "bg-purple-500/20 text-purple-400 border-purple-500/30";
+                                        } else if (category.toLowerCase().includes("dependency")) {
+                                            badgeColor = "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+                                        }
+                                        msg = `<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeColor} mx-1 uppercase tracking-wider shadow-sm">${category}</span> ${rest}`;
+                                    }
+                                }
+
+                                let contentHtml = `<span class="${statusColor}">[${data.step.toUpperCase()}]</span> ${msg}`;
 
                                 if (data.details) {
                                     // Escape basic HTML for safety, though it comes from our backend

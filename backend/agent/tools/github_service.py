@@ -101,5 +101,40 @@ class GithubService:
             })
             return pr_r.json().get("html_url", f"PR creation failed: {pr_r.text[:100]}")
 
+    async def merge_pull_request(self, pr_url: str) -> bool:
+        """Merges an open Pull Request using its HTML URL."""
+        # Convert HTML URL (https://github.com/PDK45/repo/pull/1) 
+        # to API URL (https://api.github.com/repos/PDK45/repo/pulls/1/merge)
+        try:
+            parts = pr_url.replace("https://github.com/", "").split("/")
+            repo_full_name = f"{parts[0]}/{parts[1]}"
+            pr_number = parts[3]
+            
+            api_url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}/merge"
+            
+            async with httpx.AsyncClient() as client:
+                r = await client.put(
+                    api_url, 
+                    headers=self._headers(), 
+                    json={"commit_title": "🚀 Auto-merged by Opalite AI", "merge_method": "squash"}
+                )
+                return r.status_code == 200
+        except Exception as e:
+            print(f"Error merging PR: {e}")
+            return False
+
+    async def trigger_deployment(self, webhook_url: str) -> bool:
+        """Hits a remote webhook (Render/Vercel) to trigger a production deployment."""
+        if not webhook_url:
+            return False
+            
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(webhook_url)
+                return r.status_code in [200, 201, 202, 204]
+        except Exception as e:
+            print(f"Error deploying: {e}")
+            return False
+
 
 github_service = GithubService()

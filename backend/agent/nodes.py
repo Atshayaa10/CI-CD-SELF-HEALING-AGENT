@@ -41,12 +41,12 @@ async def diagnostician_node(state: AgentState):
 
     Your job is to:
     1. Briefly summarize why the build failed (1-2 sentences).
-    2. Identify the exact file paths within the repository that likely need to be modified to fix this bug.
+    2. Identify the exact file paths within the repository that likely need to be modified to fix this bug (e.g., source code, Dockerfile, requirements.txt, configuration files).
 
     Return your response EXACTLY as a JSON object with two keys:
     {{
         "summary": "Short explanation of the error",
-        "files": ["path/to/file1.py", "path/to/file2.js"]
+        "files": ["path/to/file1.py", "path/to/Dockerfile"]
     }}
     Return ONLY the JSON object. No extra text.
     """
@@ -114,18 +114,23 @@ async def solver_node(state: AgentState):
 
     Failure reason: {state['error_summary']}
 
-    Here is the relevant source code:
+    Here is the relevant source or configuration code:
     {context}
 
     Critic's previous feedback (if any): {critic_feedback}
 
     Write the corrected version of each file that fixes the issue.
+    This could be a logic bug OR a server configuration error (like missing dependencies, Dockerfile syntax, environment setup).
     Wrap each file in a markdown code block with the file path on the first line as a comment. Example:
 
     ```python
     # path/to/filename.py
     def fixed_function():
         pass
+    ```
+    ```dockerfile
+    # Dockerfile
+    RUN pip install missing-package
     ```
     """
 
@@ -197,3 +202,34 @@ async def critic_node(state: AgentState):
     else:
         print(f"  -> Verdict: REJECTED ❌\n  -> Feedback: {content[:120]}...")
         return {"is_patch_approved": False, "critic_feedback": content}
+
+async def deployer_node(state: AgentState):
+    """
+    Node 5 (CD Hook): If Critic approves and tests pass, autonomously merges 
+    the PR and hits a deployment trigger (Render/Vercel/etc).
+    """
+    print("--- [DEPLOYER] Triggering Continuous Deployment ---")
+    if not state.get("pr_url"):
+        return {"deployment_status": "No PR to merge."}
+        
+    merged = await github_service.merge_pull_request(state["pr_url"])
+    if merged:
+        print("  -> AI safely auto-merged the PR.")
+        status = "PR successfully merged. "
+        webhook_url = os.getenv("DEPLOYMENT_WEBHOOK")
+        if webhook_url:
+            deployed = await github_service.trigger_deployment(webhook_url)
+            if deployed:
+                status += "Deployment webhook triggered successfully!"
+                print("  -> Production Deployment Trigger Hit!")
+            else:
+                status += "Failed to trigger deployment webhook."
+                print("  -> Webhook failed to return 200.")
+        else:
+            status += "No DEPLOYMENT_WEBHOOK configured."
+            print("  -> Skipped deploy webhook (not in .env).")
+            
+        return {"deployment_status": status}
+    else:
+        print("  -> Failed to merge PR via API.")
+        return {"deployment_status": "Failed to auto-merge PR."}

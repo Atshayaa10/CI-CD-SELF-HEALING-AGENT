@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from agent.state import AgentState
-from agent.nodes import diagnostician_node, researcher_node, solver_node, verifier_node, critic_node
+from agent.nodes import diagnostician_node, researcher_node, solver_node, verifier_node, critic_node, deployer_node
 
 # 1. Initialize the Graph using our TypedDict State
 workflow = StateGraph(AgentState)
@@ -13,6 +13,7 @@ workflow.add_node("researcher", researcher_node)
 workflow.add_node("solver", solver_node)
 workflow.add_node("verifier", verifier_node)
 workflow.add_node("critic", critic_node)
+workflow.add_node("deployer", deployer_node)
 
 # 3. Define the edges (Flow of logic)
 workflow.set_entry_point("diagnostician")
@@ -28,8 +29,7 @@ def check_critic_approval(state: AgentState):
     If rejected, loop back to the solver with the new feedback in state.
     """
     if state["is_patch_approved"]:
-         # TODO: Phase 4: Route to Committer Agent here instead of END
-         return "end"
+         return "deploy"
     else:
          return "retry_solver"
          
@@ -38,10 +38,12 @@ workflow.add_conditional_edges(
     "critic",
     check_critic_approval,
     {
-        "end": END,
+        "deploy": "deployer",
         "retry_solver": "solver"
     }
 )
+
+workflow.add_edge("deployer", END)
 
 # 5. Compile the graph with memory checkpointing
 memory = MemorySaver()

@@ -67,8 +67,8 @@ async def heal_endpoint(req: HealRequest):
             # --- Step 1: Scan the repository ---
             yield f"data: {json.dumps({'step': 'scan', 'status': 'running', 'message': f'Scanning repository {repo}...'})}\n\n"
             files = await github_service.get_repo_files(repo)
-            code_files = [f for f in files if f.endswith(('.py', '.js', '.ts', '.java', '.yaml', '.yml'))]
-            yield f"data: {json.dumps({'step': 'scan', 'status': 'done', 'message': f'Found {len(code_files)} code files: {code_files}'})}\n\n"
+            code_files = [f for f in files if f.endswith(('.py', '.js', '.ts', '.java', '.yaml', '.yml', '.json', '.toml', '.conf', '.ini', '.txt')) or f in ('Dockerfile', 'Makefile')]
+            yield f"data: {json.dumps({'step': 'scan', 'status': 'done', 'message': f'Found {len(code_files)} source & config files: {code_files}'})}\n\n"
 
             # --- Step 2: Fetch all code files ---
             yield f"data: {json.dumps({'step': 'fetch', 'status': 'running', 'message': 'Fetching source code from GitHub...'})}\n\n"
@@ -86,15 +86,16 @@ async def heal_endpoint(req: HealRequest):
             for path, code in all_code.items():
                 code_context += f"\n--- FILE: {path} ---\n{code}\n--- END ---\n"
 
-            diag_prompt = f"""You are an expert code reviewer. Analyze ALL the following source files for bugs, syntax errors, logic errors, or anything that would cause tests to fail.
+            diag_prompt = f"""You are an expert DevOps engineer and code reviewer. Analyze ALL the following source and configuration files for bugs, syntax errors, missing dependencies, or bad infrastructure configurations (like Dockerfile/requirements.txt errors) that would cause tests or deployments to fail.
 
 {code_context}
 
 Return your analysis as a JSON object:
 {{
     "has_errors": true/false,
+    "error_category": "Code Bug", "Infrastructure Config", or "Dependency Error",
     "summary": "Brief description of the error(s) found",
-    "broken_file": "path/to/broken_file.py",
+    "broken_file": "path/to/broken_file.ext",
     "error_details": "Detailed explanation of what is wrong"
 }}
 Return ONLY the JSON. No extra text."""
@@ -114,7 +115,8 @@ Return ONLY the JSON. No extra text."""
             diagnosis = json.loads(diag_text.strip())
 
             diag_summary = diagnosis.get("summary", "No summary provided")
-            yield f"data: {json.dumps({'step': 'diagnose', 'status': 'done', 'message': f'Diagnosis: {diag_summary}', 'details': json.dumps(diagnosis, indent=2)})}\n\n"
+            diag_category = diagnosis.get("error_category", "Code Bug")
+            yield f"data: {json.dumps({'step': 'diagnose', 'status': 'done', 'message': f'[{diag_category}] {diag_summary}', 'details': json.dumps(diagnosis, indent=2)})}\n\n"
 
             if not diagnosis.get("has_errors"):
                 yield f"data: {json.dumps({'step': 'complete', 'status': 'clean', 'message': '✅ No errors found! Repository code looks clean.'})}\n\n"
@@ -206,7 +208,31 @@ Otherwise reply with what is wrong and include the failing test trace."""
             )
 
             yield f"data: {json.dumps({'step': 'push', 'status': 'done', 'message': f'Pull Request opened: {pr_url}'})}\n\n"
-            yield f"data: {json.dumps({'step': 'complete', 'status': 'success', 'message': f'🎉 Healing complete! PR: {pr_url}', 'pr_url': pr_url})}\n\n"
+
+            # --- Step 7: CD Deployer — AI Auto-Merges and Deploys ---
+            if "APPROVE" in critic_verdict and is_success:
+                yield f"data: {json.dumps({'step': 'deploy', 'status': 'running', 'message': '🚢 Executing Continuous Deployment (Auto-merge & Webhook)...'})}\n\n"
+                
+                # We replicate the deployer_node logic here for the stream
+                merged = await github_service.merge_pull_request(pr_url)
+                if merged:
+                    status_text = "PR successfully merged. "
+                    webhook_url = os.getenv("DEPLOYMENT_WEBHOOK")
+                    if webhook_url:
+                        deployed = await github_service.trigger_deployment(webhook_url)
+                        if deployed:
+                            status_text += "Deployment webhook triggered successfully!"
+                            yield f"data: {json.dumps({'step': 'deploy', 'status': 'done', 'message': '✅ CD Success: ' + status_text})}\n\n"
+                        else:
+                            status_text += "Failed to trigger deployment webhook."
+                            yield f"data: {json.dumps({'step': 'deploy', 'status': 'error', 'message': '⚠️ CD Warning: ' + status_text})}\n\n"
+                    else:
+                        status_text += "No DEPLOYMENT_WEBHOOK configured."
+                        yield f"data: {json.dumps({'step': 'deploy', 'status': 'done', 'message': '✅ CD Success: ' + status_text})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'step': 'deploy', 'status': 'error', 'message': '⚠️ CD Warning: Failed to auto-merge PR.'})}\n\n"
+
+            yield f"data: {json.dumps({'step': 'complete', 'status': 'success', 'message': f'🎉 Healing & Deployment complete! PR: {pr_url}', 'pr_url': pr_url})}\n\n"
 
         except Exception as e:
             import traceback
