@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neoverse | CI/CD Auto-Healer</title>
+    <title>Opalite | CI/CD Auto-Healer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -59,7 +59,7 @@
     <nav class="w-full glass-panel px-6 py-4 flex justify-between items-center z-10 shrink-0">
         <div class="flex items-center gap-3">
             <i class="fa-solid fa-robot text-blue-400 text-2xl"></i>
-            <h1 class="text-xl font-bold tracking-tight text-white">Neoverse <span
+            <h1 class="text-xl font-bold tracking-tight text-white">Opalite <span
                     class="text-blue-400 font-light">Auto-Healer</span></h1>
         </div>
         <div class="flex items-center gap-4">
@@ -86,15 +86,19 @@
                 <div
                     class="bg-slate-800/50 p-3 rounded-lg border border-slate-700 hover:border-blue-400 transition cursor-pointer">
                     <div class="flex justify-between items-center mb-2">
-                        <span class="font-medium text-blue-200">user/Neoverse-App</span>
+                        <span class="font-medium text-blue-200">user/Opalite-App</span>
                         <span
                             class="bg-red-500/20 text-red-400 text-xs px-2 py-1 rounded border border-red-500/30 font-mono">Failing</span>
                     </div>
                     <p class="text-xs text-slate-400">Commit <code>a1b2c3d</code> • 2 mins ago</p>
-                    <div class="mt-3 flex gap-2">
-                        <button onclick="triggerMockWebhook()"
-                            class="w-full bg-slate-700 hover:bg-blue-600 transition text-xs py-1.5 rounded text-white flex justify-center items-center gap-2">
-                            <i class="fa-solid fa-play"></i> Trigger Agent Healing
+                    <div class="mt-3 flex flex-col gap-2">
+                        <button onclick="triggerMockWebhook('user/Opalite-App')"
+                            class="w-full bg-slate-700 hover:bg-emerald-600 transition text-xs py-1.5 rounded text-white flex justify-center items-center gap-2">
+                            <i class="fa-solid fa-play"></i> Run Webhook Test
+                        </button>
+                        <button onclick="triggerHeal('PDK45/opalite-test-pipeline')"
+                            class="w-full bg-blue-600 hover:bg-blue-500 transition text-xs py-1.5 rounded text-white flex justify-center items-center gap-2 shadow-lg shadow-blue-900/50">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze & Heal Repo
                         </button>
                     </div>
                 </div>
@@ -138,7 +142,7 @@
 
                 <!-- Initial Greeting -->
                 <div class="message-ai p-4 rounded-lg text-sm text-slate-200 shadow-md">
-                    <p class="font-semibold text-blue-400 mb-1"><i class="fa-solid fa-robot mr-1"></i> Neoverse OS</p>
+                    <p class="font-semibold text-blue-400 mb-1"><i class="fa-solid fa-robot mr-1"></i> Opalite OS</p>
                     <p>System initialized. I am actively monitoring your webhook endpoints.</p>
                     <p class="mt-2 text-slate-400">You can test the autonomous healing loop by clicking "Trigger Agent
                         Healing" on the left, or you can converse with me directly using the chat box below.</p>
@@ -176,7 +180,7 @@
 
             const header = document.createElement('p');
             header.className = `font-semibold mb-1 ${isAI ? 'text-blue-400' : 'text-slate-400'}`;
-            header.innerHTML = isAI ? '<i class="fa-solid fa-robot mr-1"></i> Neoverse OS' : '<i class="fa-solid fa-user mr-1"></i> Developer';
+            header.innerHTML = isAI ? '<i class="fa-solid fa-robot mr-1"></i> Opalite OS' : '<i class="fa-solid fa-user mr-1"></i> Developer';
 
             const content = document.createElement('div');
             if (isHtml) {
@@ -238,44 +242,100 @@
             }
         });
 
-        // Mock function to trigger the FastAPI Webhook route for testing the LangGraph loop
-        async function triggerMockWebhook() {
-            appendMessage('User', "SYSTEM COMMAND: Initiating mock GitHub Webhook for failed action on repository 'user/Neoverse-App'");
-            const aiTextContainer = appendMessage('AI', 'Transmitting payload to backend /webhook endpoint...');
+        // Mock Webhook (Original)
+        async function triggerMockWebhook(repo) {
+            appendMessage('User', `SYSTEM COMMAND: Initiating mock GitHub Webhook for failed action on repository '${repo}'`);
+            const aiTextContainer = appendMessage('AI', 'Transmitting mock webhook payload...');
+            chatInput.disabled = true;
+            try {
+                const response = await fetch('/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-GitHub-Event': 'workflow_run' },
+                    body: JSON.stringify({
+                        action: "completed",
+                        workflow_run: { id: 99999, conclusion: "failure", head_sha: "a1b2c3d" },
+                        repository: { full_name: repo }
+                    })
+                });
+                const data = await response.json();
+                aiTextContainer.textContent = `Webhook response: ${data.message}`;
+            } catch (err) {
+                aiTextContainer.textContent = "Error: " + err.message;
+            } finally {
+                chatInput.disabled = false;
+            }
+        }
 
+        // Live Autonomous Healing Demo
+        async function triggerHeal(repoName) {
+            appendMessage('User', `SYSTEM COMMAND: Initiate full autonomous healing sequence on repository '${repoName}'`);
+            const aiTextContainer = appendMessage('AI', 'Initializing LangGraph healing sequence...');
             chatInput.disabled = true;
 
             try {
-                const payload = {
-                    action: "completed",
-                    workflow_run: { id: 99999, conclusion: "failure", head_sha: "a1b2c3d" },
-                    repository: { full_name: "user/Neoverse-App" }
-                };
-
-                const response = await fetch('/webhook', {
+                const response = await fetch('/heal', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-GitHub-Event': 'workflow_run'
-                    },
-                    body: JSON.stringify(payload)
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo: repoName })
                 });
 
-                const data = await response.json();
+                if (!response.body) throw new Error("ReadableStream not supported.");
 
-                // Formatted UI update
-                aiTextContainer.innerHTML = `
-                    <div class="mt-2 p-3 bg-slate-900 rounded border border-blue-500 overflow-x-auto font-mono text-xs">
-                        <span class="text-green-400">Webhook Status:</span> ${data.status}<br>
-                        <span class="text-blue-300">Message:</span> ${data.message}<br>
-                        <span class="text-slate-400">Run ID:</span> ${data.run_id}
-                    </div>
-                    <p class="mt-2 italic text-slate-400">Check your IDE terminal/console to view the live LangGraph Agent debate and execution!</p>
-                `;
-                chatWindow.scrollTop = chatWindow.scrollHeight;
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = "";
+                let hasClearedInitial = false;
 
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Parse Server-Sent Events (SSE)
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop(); // keep remainder
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (!hasClearedInitial) {
+                                    aiTextContainer.textContent = "";
+                                    hasClearedInitial = true;
+                                }
+
+                                // Create a visual step entry
+                                const stepDiv = document.createElement('div');
+                                stepDiv.className = "mt-2 p-3 bg-slate-900 rounded border border-slate-700 font-mono text-xs";
+
+                                let statusColor = "text-blue-400";
+                                if (data.status === "done") statusColor = "text-green-400";
+                                if (data.status === "error" || data.status === "failed") statusColor = "text-red-400";
+                                if (data.status === "clean" || data.status === "success") statusColor = "text-emerald-400 font-bold";
+
+                                let contentHtml = `<span class="${statusColor}">[${data.step.toUpperCase()}]</span> ${data.message}`;
+
+                                if (data.pr_url) {
+                                    contentHtml += `<br><a href="${data.pr_url}" target="_blank" class="text-blue-400 underline mt-2 inline-block"><i class="fa-solid fa-up-right-from-square"></i> View Pull Request</a>`;
+                                }
+
+                                stepDiv.innerHTML = contentHtml;
+                                aiTextContainer.appendChild(stepDiv);
+                                chatWindow.scrollTop = chatWindow.scrollHeight;
+
+                            } catch (e) {
+                                console.error("Error parsing SSE JSON:", e, line);
+                            }
+                        }
+                    }
+                }
             } catch (err) {
-                aiTextContainer.textContent = "Error triggering webhook: " + err.message;
+                const errorDiv = document.createElement('div');
+                errorDiv.className = "mt-2 p-3 bg-red-900/20 text-red-400 rounded border border-red-500 font-mono text-xs";
+                errorDiv.textContent = "Fatal stream error: " + err.message;
+                aiTextContainer.appendChild(errorDiv);
             } finally {
                 chatInput.disabled = false;
             }

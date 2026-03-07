@@ -1,4 +1,4 @@
-# 🤖 Neoverse — CI/CD Self-Healing AI Agent
+# 🤖 Opalite — CI/CD Self-Healing AI Agent
 
 An AI-powered SaaS platform that autonomously detects, diagnoses, and fixes failing CI/CD pipelines. When a GitHub Actions build fails, the system intercepts the webhook, analyzes logs using a multi-agent AI debate loop, generates a code patch, and opens a Pull Request — all without human intervention.
 

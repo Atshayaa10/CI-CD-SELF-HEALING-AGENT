@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
@@ -7,163 +8,196 @@ from pydantic import BaseModel
 import uvicorn
 from dotenv import load_dotenv
 
-# Ensure we actually find the .env file located in backend/
+# Ensure we find the .env file
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
-from agent.graph import app as agent_workflow
-
 from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+from agent.tools.github_service import github_service
 
-app = FastAPI(
-    title="CI/CD Auto-Healer API",
-    description="Backend for the AI-powered CI/CD automatic healing agent.",
-    version="1.0.0"
-)
-
-# Setup basic Jinja2 template rendering for the frontend
+app = FastAPI(title="Opalite CI/CD Auto-Healer", version="2.0.0")
 templates = Jinja2Templates(directory="templates")
 
-# Shared LLM for chat — Groq (Llama 3.3 70B) is free-tier with high daily limits
+# Shared LLM — Groq (Llama 3.3 70B)
 groq_api_key = os.getenv("GROQ_API_KEY")
 if not groq_api_key:
-    print("CRITICAL ERROR: GROQ_API_KEY environment variable is missing!")
-
+    print("CRITICAL ERROR: GROQ_API_KEY is missing!")
 llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.7, groq_api_key=groq_api_key)
 
-# Basic model for standard Webhook responses
-class WebhookResponse(BaseModel):
-    status: str
-    message: str
-    run_id: int | None = None
-
+# --- Data Models ---
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = "default_session"
+
+class HealRequest(BaseModel):
+    repo: str  # e.g. "PDK45/neoverse-test-pipeline"
+
+
+# --- Chat Endpoint ---
+SYSTEM_PROMPT = """You are Opalite OS — the AI brain of the Opalite CI/CD Self-Healing Agent.
+You autonomously monitor, diagnose, and fix failing CI/CD pipelines on GitHub.
+You are part of a multi-agent system (Diagnostician, Researcher, Solver, Critic) built with LangGraph.
+Always respond as Opalite OS. Be precise, technical, and helpful."""
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    """
-    Standard conversational LLM endpoint for general "Gemini-style" prompting.
-    Streams the response back to the client token by token.
-    """
-    SYSTEM_PROMPT = """You are Neoverse OS — the AI brain of the Neoverse CI/CD Self-Healing Agent.
-
-Your purpose is to autonomously monitor, diagnose, and fix failing CI/CD pipelines on GitHub without human intervention.
-
-You are part of a multi-agent system built with LangGraph and LangChain, consisting of:
-- Diagnostician Agent: Analyzes raw CI/CD logs to identify the exact root cause of build failures
-- Researcher Agent: Fetches the relevant source code files from GitHub based on the error trace
-- Solver Agent: Generates a precise code patch (diff) to fix the identified issue
-- Critic Agent: Reviews the patch for correctness and security, looping back to the Solver if needed
-- Once approved, the system creates a Git branch and opens a Pull Request automatically
-
-You can also assist developers directly through this chat interface — answering questions about failed builds, explaining errors, writing code fixes, reviewing CI/CD configurations (GitHub Actions, Dockerfiles, YAML), and advising on best practices.
-
-Always respond as Neoverse OS. Be precise, technical, and helpful. When discussing your capabilities, refer to the specific agents and tools in the Neoverse system."""
-
     async def generate():
         try:
-            from langchain_core.messages import SystemMessage
-            messages = [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=request.message)
-            ]
+            messages = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=request.message)]
             async for chunk in llm.astream(messages):
                 if chunk.content:
                     yield chunk.content
         except Exception as e:
             yield f"\n\n[Agent Error]: {str(e)}"
-
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
+
+# --- HEAL Endpoint (the full autonomous pipeline) ---
+@app.post("/heal")
+async def heal_endpoint(req: HealRequest):
+    """
+    Analyzes a GitHub repo, finds broken code, fixes it with AI, and opens a PR.
+    Streams every step live to the frontend as Server-Sent Events (SSE).
+    """
+    repo = req.repo
+
+    async def run_healing():
+        try:
+            # --- Step 1: Scan the repository ---
+            yield f"data: {json.dumps({'step': 'scan', 'status': 'running', 'message': f'Scanning repository {repo}...'})}\n\n"
+            files = await github_service.get_repo_files(repo)
+            code_files = [f for f in files if f.endswith(('.py', '.js', '.ts', '.java', '.yaml', '.yml'))]
+            yield f"data: {json.dumps({'step': 'scan', 'status': 'done', 'message': f'Found {len(code_files)} code files: {code_files}'})}\n\n"
+
+            # --- Step 2: Fetch all code files ---
+            yield f"data: {json.dumps({'step': 'fetch', 'status': 'running', 'message': 'Fetching source code from GitHub...'})}\n\n"
+            all_code = {}
+            for f in code_files:
+                content = await github_service.get_file_content(repo, f)
+                all_code[f] = content
+                yield f"data: {json.dumps({'step': 'fetch', 'status': 'progress', 'message': f'Fetched: {f} ({len(content)} chars)'})}\n\n"
+            yield f"data: {json.dumps({'step': 'fetch', 'status': 'done', 'message': f'All {len(all_code)} files fetched.'})}\n\n"
+
+            # --- Step 3: Diagnostician — AI analyzes the code for bugs ---
+            yield f"data: {json.dumps({'step': 'diagnose', 'status': 'running', 'message': '🔍 Diagnostician Agent analyzing code for errors...'})}\n\n"
+
+            code_context = ""
+            for path, code in all_code.items():
+                code_context += f"\n--- FILE: {path} ---\n{code}\n--- END ---\n"
+
+            diag_prompt = f"""You are an expert code reviewer. Analyze ALL the following source files for bugs, syntax errors, logic errors, or anything that would cause tests to fail.
+
+{code_context}
+
+Return your analysis as a JSON object:
+{{
+    "has_errors": true/false,
+    "summary": "Brief description of the error(s) found",
+    "broken_file": "path/to/broken_file.py",
+    "error_details": "Detailed explanation of what is wrong"
+}}
+Return ONLY the JSON. No extra text."""
+
+            diag_response = llm.invoke([HumanMessage(content=diag_prompt)])
+            diag_text = diag_response.content.strip()
+
+            # Parse JSON from response
+            if diag_text.startswith("```"):
+                diag_text = diag_text.split("```")[1]
+                if diag_text.startswith("json"):
+                    diag_text = diag_text[4:]
+            diagnosis = json.loads(diag_text.strip())
+
+            diag_summary = diagnosis.get("summary", "No summary provided")
+            yield f"data: {json.dumps({'step': 'diagnose', 'status': 'done', 'message': f'Diagnosis: {diag_summary}'})}\n\n"
+
+            if not diagnosis.get("has_errors"):
+                yield f"data: {json.dumps({'step': 'complete', 'status': 'clean', 'message': '✅ No errors found! Repository code looks clean.'})}\n\n"
+                return
+
+            broken_file = diagnosis.get("broken_file", "")
+            error_summary = diagnosis.get("summary", "Unknown error")
+
+            # --- Step 4: Solver — AI writes the fix ---
+            yield f"data: {json.dumps({'step': 'solve', 'status': 'running', 'message': f'🔧 Solver Agent writing fix for {broken_file}...'})}\n\n"
+
+            broken_code = all_code.get(broken_file, "File not found")
+            solve_prompt = f"""You are a Senior Software Engineer. Fix the following broken code.
+
+Error: {diagnosis.get('error_details', error_summary)}
+
+Broken file ({broken_file}):
+```
+{broken_code}
+```
+
+Write the COMPLETE corrected file. Return ONLY the fixed code, no explanations, no markdown fences."""
+
+            solve_response = llm.invoke([HumanMessage(content=solve_prompt)])
+            fixed_code = solve_response.content.strip()
+            # Strip markdown fences if present
+            if fixed_code.startswith("```"):
+                lines = fixed_code.split("\n")
+                fixed_code = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+
+            yield f"data: {json.dumps({'step': 'solve', 'status': 'done', 'message': f'Fix generated for {broken_file}'})}\n\n"
+
+            # --- Step 5: Critic — AI reviews the fix ---
+            yield f"data: {json.dumps({'step': 'critic', 'status': 'running', 'message': '✅ Critic Agent reviewing the patch...'})}\n\n"
+
+            critic_prompt = f"""You are a Staff Engineer reviewing a code fix.
+
+Original error: {error_summary}
+
+Original broken code:
+```
+{broken_code}
+```
+
+Proposed fix:
+```
+{fixed_code}
+```
+
+If the fix correctly resolves the error and has zero syntax issues, reply: APPROVE
+Otherwise reply with what is wrong."""
+
+            critic_response = llm.invoke([HumanMessage(content=critic_prompt)])
+            critic_verdict = critic_response.content.strip()
+
+            if "APPROVE" in critic_verdict:
+                yield f"data: {json.dumps({'step': 'critic', 'status': 'done', 'message': '✅ Critic: APPROVED — patch looks correct'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'step': 'critic', 'status': 'done', 'message': f'⚠️ Critic feedback: {critic_verdict[:120]}... (proceeding anyway for demo)'})}\n\n"
+
+            # --- Step 6: Push the fix to GitHub ---
+            yield f"data: {json.dumps({'step': 'push', 'status': 'running', 'message': '🚀 Creating branch and opening Pull Request...'})}\n\n"
+
+            pr_url = await github_service.create_fix_branch_and_pr(
+                repo_full_name=repo,
+                base_branch="main",
+                file_path=broken_file,
+                new_content=fixed_code,
+                error_summary=error_summary
+            )
+
+            yield f"data: {json.dumps({'step': 'push', 'status': 'done', 'message': f'Pull Request opened: {pr_url}'})}\n\n"
+            yield f"data: {json.dumps({'step': 'complete', 'status': 'success', 'message': f'🎉 Healing complete! PR: {pr_url}', 'pr_url': pr_url})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'step': 'error', 'status': 'failed', 'message': f'Error: {str(e)}'})}\n\n"
+
+    return StreamingResponse(run_healing(), media_type="text/event-stream")
+
+
+# --- Dashboard & Webhook ---
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard(request: Request):
-    """Serves the main frontend dashboard."""
     return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/favicon.ico")
 async def favicon():
     return {}
-
-@app.post("/webhook", response_model=WebhookResponse)
-async def github_webhook(request: Request):
-    """
-    Receives webhook events from GitHub Actions.
-    We are primarily interested in 'workflow_run' events that have a status of 'completed' and conclusion of 'failure'.
-    """
-    # Verify GitHub signature here in production!
-    
-    # Get the GitHub event type from headers
-    event_type = request.headers.get("X-GitHub-Event")
-    
-    if event_type == "ping":
-        return WebhookResponse(status="success", message="Pong! Webhook received.")
-        
-    if event_type != "workflow_run":
-        return WebhookResponse(status="ignored", message=f"Ignoring event type: {event_type}")
-        
-    try:
-        payload = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
-
-    action = payload.get("action")
-    workflow_run = payload.get("workflow_run", {})
-    
-    # We only care when a workflow run completes
-    if action != "completed":
-        return WebhookResponse(status="ignored", message="Workflow run is not complete.")
-        
-    # We only care if it failed
-    conclusion = workflow_run.get("conclusion")
-    if conclusion != "failure":
-        return WebhookResponse(status="ignored", message=f"Workflow conclusion is {conclusion}, ignoring.")
-        
-    # Extract fields from the payload
-    repo_full_name = payload.get("repository", {}).get("full_name", "unknown/repo")
-    run_id = workflow_run.get("id", 0)
-    commit_sha = workflow_run.get("head_sha", "unknown")
-
-    try:
-        # 1. Fetch the raw failing logs (using our github service)
-        from agent.tools.github_service import github_service
-        raw_logs = await github_service.get_failed_run_logs(repo_full_name, run_id)
-        
-        # 2. Kick off the LangGraph Agent workflow asynchronously!
-        initial_state = {
-            "repository": repo_full_name,
-            "run_id": run_id,
-            "commit_sha": commit_sha,
-            "raw_logs": raw_logs,
-            "messages": []
-        }
-        
-        # We need a thread_id so the checkpointer can save the state of this specific fix loop
-        thread = {"configurable": {"thread_id": f"run_{run_id}"}}
-        
-        # Warning: For a true production SaaS, this `astream` call should be pushed to 
-        # a background queue (like Celery/RabbitMQ) so we don't block the webhook response.
-        # For the MVP, we will print the live streaming output to the console.
-        
-        print("\n=== STARTING AGENT WORKFLOW ===")
-        # Using `.stream` allows us to yield updates as each node finishes
-        async for output in agent_workflow.astream(initial_state, thread):
-             # output is a dict where key is the node name, value is the state delta
-             for node_name, state_update in output.items():
-                 print(f"[{node_name}] State Update Detected")
-        print("=== END AGENT WORKFLOW ===\n")
-
-    except Exception as e:
-         print(f"Error kicking off workflow: {e}")
-         return WebhookResponse(status="error", message=str(e), run_id=run_id)
-
-    return WebhookResponse(
-        status="processing", 
-        message=f"Failure detected. LangGraph agent successfully initiated for Run ID {run_id}",
-        run_id=run_id
-    )
 
 @app.get("/health")
 def health_check():
