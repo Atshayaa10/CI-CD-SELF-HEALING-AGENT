@@ -74,10 +74,10 @@ We don't trust the AI blindly. The **Verifier Node** clones a temp repository, a
 ---
 
 ## 🤖 6. Agentic Intelligence (For SurveySparrow Judges)
-**Opalite OS is an "Agentic Operating System," not just a bot.**
 *   **Cyclical Reasoning:** We don't use linear flows. Our **LangGraph state machine** allows agents to iterate and self-correct (solving → verifying → failing → solving again).
+*   **Technically Categorized Issues:** We identify specific "Issues" (Logic Bug, Config Leak, Dependency Error) within a failure. This allows surgical remediation instead of a generic "best guess."
 *   **Autonomous Tooling:** The agent has full agency over the Repo (REST API), the Code (Git Database), and the Environment (Shell Sandbox).
-*   **Collaborative Multi-Agent:** We use distinct specialist agents (Diagnostician, Solver, Verifier, Critic) that "peer review" each other to ensure zero-hallucination fixes.
+*   **Collaborative Multi-Agent:** We use distinct specialist agents (Diagnostician, Solver, Verifier, Critic) that "peer review" each other.
 
 **Agentic Deep Dive:** See the **[AGENTIC_ARCHITECTURE.md](file:///C:/Users/Dk/.gemini/antigravity/brain/12d39119-a4e2-4c20-b734-81d25e5a4052/AGENTIC_ARCHITECTURE.md)** for technical details on our loops and state management.
 

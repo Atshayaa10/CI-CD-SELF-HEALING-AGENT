@@ -8,6 +8,7 @@
 Unlike traditional linear CI/CD pipelines, Opalite uses a **Directed Acyclic Graph (with Loops)** to manage reasoning.
 *   **Stateful Memory:** We maintain a global `AgentState` that tracks logs, code context, and past verification failures.
 *   **Decoupled Nodes:** Each agent (Diagnostician, Solver, Critic) is a specialized "Expert Node" with its own prompt-engineering and tool-access layer.
+*   **Technical Issue Categorization (Jury Feedback):** Instead of simple "error parsing," the agent now identifies and labels granular **Technical Issues** (e.g., *Syntax Error*, *Dependency Conflict*, *IaC Misconfig*). This categorization drives smarter RAG retrieval and more targeted code generation.
 
 ---
 

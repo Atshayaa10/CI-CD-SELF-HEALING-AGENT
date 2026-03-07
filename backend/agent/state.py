@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     raw_logs: str
     error_summary: str | None
     files_to_fetch: List[str]
+    technical_issues: List[dict] # Dedicated list of categorized issues
     
     # 2. Researcher Context
     file_contents: dict[str, str] # e.g., {'src/main.py': 'def hello()...'}

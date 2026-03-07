@@ -40,40 +40,52 @@ async def diagnostician_node(state: AgentState):
     </error_trace>
 
     Your job is to:
-    1. Briefly summarize why the build failed (1-2 sentences).
-    2. Identify the exact file paths within the repository that likely need to be modified to fix this bug (e.g., source code, Dockerfile, requirements.txt, configuration files).
+    1. Categorize the failure into specific "Technical Issues".
+    2. For each issue, identify:
+       - Category: (e.g., Syntax Error, Dependency Conflict, Logic Bug, IaC Misconfiguration)
+       - Root Cause: (Specific technical reason)
+       - File Path: (Which file is broken)
+       - Detail: (Developer-centric technical detail)
 
-    Return your response EXACTLY as a JSON object with two keys:
+    Return your response EXACTLY as a JSON object:
     {{
-        "summary": "Short explanation of the error",
-        "files": ["path/to/file1.py", "path/to/Dockerfile"]
+        "error_summary": "High-level reason for failure",
+        "files_to_fetch": ["path/to/file1.py", "path/to/Dockerfile"],
+        "technical_issues": [
+            {{
+                "id": "ISSUE-001",
+                "category": "Syntax Error",
+                "root_cause": "Unexpected indent",
+                "path": "math_utils.py",
+                "detail": "Indent error at line 42 in subtract function"
+            }}
+        ]
     }}
-    Return ONLY the JSON object. No extra text.
+    Return ONLY the JSON object.
     """
 
     response = llm.invoke([HumanMessage(content=prompt)])
 
     try:
-        # Strip markdown code fences if the model wraps the JSON
         json_str = response.content.strip()
         if json_str.startswith("```"):
             json_str = json_str.split("```")[1]
             if json_str.startswith("json"):
                 json_str = json_str[4:]
         result_dict = json.loads(json_str.strip())
-        summary = result_dict.get("summary", "Failed to parse summary")
-        files_to_fetch = result_dict.get("files", [])
+        summary = result_dict.get("error_summary", "Failed to parse summary")
+        files_to_fetch = result_dict.get("files_to_fetch", [])
+        technical_issues = result_dict.get("technical_issues", [])
     except Exception as e:
         print(f"  -> JSON Parse error in Diagnostician: {e}")
-        summary = response.content
+        summary = "Error parsing diagnosis JSON"
         files_to_fetch = []
-
-    print(f"  -> Summary: {summary}")
-    print(f"  -> Files to fetch: {files_to_fetch}")
+        technical_issues = [{"category": "Diagnosis Error", "detail": str(e)}]
 
     return {
         "error_summary": summary,
-        "files_to_fetch": files_to_fetch
+        "files_to_fetch": files_to_fetch,
+        "technical_issues": technical_issues
     }
 
 
@@ -113,38 +125,44 @@ async def solver_node(state: AgentState):
     # --- Query Memory Crystal for past fixes ---
     try:
         from agent.tools.memory_crystal import query_memory_for_fix
-        past_fixes = query_memory_for_fix(error_summary, n_results=1)
+        # Use the first issue's category if available for more targeted RAG
+        primary_issue = state.get("technical_issues", [{}])[0]
+        issue_cat = primary_issue.get("category", None)
+        
+        past_fixes = query_memory_for_fix(error_summary, issue_category=issue_cat, n_results=1)
         memory_context = ""
         if past_fixes:
             match = past_fixes[0]
-            print(f"  -> [MEMORY] Found highly relevant past fix from {match['repo']}!")
+            print(f"  -> [MEMORY] Found highly relevant past fix for category: {match['category']}!")
             memory_context = f"\n\nCRITICAL CONTEXT: I have seen a very similar error in the past. Here is how I successfully fixed it before. Try to adapt this past fix to the current code:\\nPast Error: {match['past_error']}\\nPast Fix Applied:\\n{match['fix_patch']}"
     except Exception as e:
         print(f"  -> [MEMORY] Warning: Could not query Memory Crystal: {e}")
         memory_context = ""
 
-    prompt = f"""
-    You are a Senior Software Engineer resolving a CI/CD build failure.
+    issues_context = ""
+    for issue in state.get("technical_issues", []):
+        issues_context += f"- [{issue.get('category', 'Bug')}] File: {issue.get('path', 'N/A')} - {issue.get('detail', 'N/A')}\n"
 
-    Failure reason: {error_summary}{memory_context}
+    prompt = f"""
+    You are a Senior Software Engineer resolving multiple technical issues in a CI/CD build failure.
+
+    High-level Summary: {state['error_summary']}
+
+    Specific Issues to Resolve:
+    {issues_context}{memory_context}
 
     Here is the relevant source or configuration code:
     {context}
 
     Critic's previous feedback (if any): {critic_feedback}
 
-    Write the corrected version of each file that fixes the issue.
-    This could be a logic bug OR a server configuration error (like missing dependencies, Dockerfile syntax, environment setup).
+    Write the corrected version of each file that fixes ALL the issues listed above.
     Wrap each file in a markdown code block with the file path on the first line as a comment. Example:
 
     ```python
     # path/to/filename.py
     def fixed_function():
         pass
-    ```
-    ```dockerfile
-    # Dockerfile
-    RUN pip install missing-package
     ```
     """
 
@@ -242,17 +260,22 @@ async def deployer_node(state: AgentState):
             status += "No DEPLOYMENT_WEBHOOK configured."
             print("  -> Skipped deploy webhook (not in .env).")
             
-        # --- Save to Memory Crystal ---
+            # --- Save to Memory Crystal ---
         try:
             from agent.tools.memory_crystal import save_fix_to_memory
             repo = state.get("repository", "unknown/repo")
             error_details = state.get("error_summary", "")
             context_files = state.get("file_contents", {})
-            broken_file = list(context_files.keys())[0] if context_files else "unknown_file.py"
+            broken_file = list(context_files.items())[0][0] if context_files else "unknown_file.py"
             fixed_code = state.get("proposed_patch", "")
+            
+            # Use the first issue's category
+            primary_issue = state.get("technical_issues", [{}])[0]
+            issue_cat = primary_issue.get("category", "General")
+
             if fixed_code and error_details:
-                save_fix_to_memory(repo, error_details, broken_file, fixed_code)
-                print("  -> [MEMORY] Fix successfully etched into the Memory Crystal!")
+                save_fix_to_memory(repo, error_details, broken_file, fixed_code, issue_category=issue_cat)
+                print(f"  -> [MEMORY] Fix successfully etched into the Memory Crystal under category: {issue_cat}!")
         except Exception as e:
             print(f"  -> [MEMORY] Warning: Failed to write to Memory Crystal: {e}")
             

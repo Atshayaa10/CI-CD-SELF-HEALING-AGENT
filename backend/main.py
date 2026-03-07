@@ -107,97 +107,86 @@ async def heal_endpoint(req: HealRequest):
             for path, code in all_code.items():
                 code_context += f"\n--- FILE: {path} ---\n{code}\n--- END ---\n"
 
-            diag_prompt = f"""You are an expert DevOps engineer and code reviewer. Analyze ALL the following source and configuration files for bugs, syntax errors, missing dependencies, or bad infrastructure configurations (like Dockerfile/requirements.txt errors) that would cause tests or deployments to fail.
+            diag_prompt = f"""You are an expert DevOps engineer and code reviewer. Analyze the failure and categorize it into specific "Technical Issues".
+            
+            {code_context}
 
-{code_context}
-
-Return your analysis as a JSON object:
-{{
-    "has_errors": true/false,
-    "error_category": "Code Bug", "Infrastructure Config", or "Dependency Error",
-    "summary": "Brief description of the error(s) found",
-    "broken_file": "path/to/broken_file.ext",
-    "error_details": "Detailed explanation of what is wrong"
-}}
-Return ONLY the JSON. No extra text."""
+            Return your response EXACTLY as a JSON object:
+            {{
+                "has_errors": true,
+                "error_summary": "High-level reason",
+                "files_to_fetch": ["path/to/file.py"],
+                "technical_issues": [
+                    {{
+                        "id": "ISSUE-001",
+                        "category": "Code Bug", "Infrastructure Config", or "Dependency Error",
+                        "path": "file.py",
+                        "detail": "Specific technical detail for developers"
+                    }}
+                ]
+            }}
+            Return ONLY the JSON."""
 
             diag_response = llm.invoke([HumanMessage(content=diag_prompt)])
             diag_text = diag_response.content.strip()
 
-            # Parse JSON from response more robustly
             import re
-            print(f"--- RAW LLM DIAGNOSIS OUTPUT ---\n{diag_text}\n--------------------------------")
             json_match = re.search(r'\{[\s\S]*\}', diag_text)
             if json_match:
-                diag_text = json_match.group(0)
+                diagnosis = json.loads(json_match.group(0))
             else:
-                raise ValueError("Could not find a valid JSON object in the LLM response.")
-                
-            diagnosis = json.loads(diag_text.strip())
+                raise ValueError("Valid JSON not found in diagnosis.")
 
-            diag_summary = diagnosis.get("summary", "No summary provided")
-            diag_category = diagnosis.get("error_category", "Code Bug")
-            yield f"data: {json.dumps({'step': 'diagnose', 'status': 'done', 'message': f'[{diag_category}] {diag_summary}', 'details': json.dumps(diagnosis, indent=2)})}\n\n"
+            diag_summary = diagnosis.get("error_summary", "No summary")
+            tech_issues = diagnosis.get("technical_issues", [])
+            yield f"data: {json.dumps({'step': 'diagnose', 'status': 'done', 'message': f'✅ Detected {len(tech_issues)} Technical Issues', 'details': json.dumps(diagnosis, indent=2)})}\n\n"
 
-            if not diagnosis.get("has_errors"):
-                yield f"data: {json.dumps({'step': 'complete', 'status': 'clean', 'message': '✅ No errors found! Repository code looks clean.'})}\n\n"
+            if not diagnosis.get("has_errors") or not tech_issues:
+                yield f"data: {json.dumps({'step': 'complete', 'status': 'clean', 'message': '✅ No critical issues found! Repository looks stable.'})}\n\n"
                 return
 
-            broken_file = diagnosis.get("broken_file", "")
-            error_summary = diagnosis.get("summary", "Unknown error")
-
-            # --- Step 3.5: Memory Crystal (RAG) — AI searches past errors ---
-            yield f"data: {json.dumps({'step': 'memory', 'status': 'running', 'message': f'🧠 Memory Crystal searching for past fixes to [{diag_category}]...'})}\n\n"
+            error_summary = diagnosis.get("error_summary", "Unknown error")
             
+            # --- Step 3.5: Memory Crystal (RAG) — AI searches past patterns by category ---
+            primary_cat = tech_issues[0].get("category", "General") if tech_issues else "General"
+            yield f"data: {json.dumps({'step': 'memory', 'status': 'running', 'message': f'🧠 Memory Crystal matching solutions for {primary_cat} issues...'})}\n\n"
+
             try:
-                past_fixes = query_memory_for_fix(error_summary, n_results=1)
+                from agent.tools.memory_crystal import query_memory_for_fix
+                past_fixes = query_memory_for_fix(error_summary, issue_category=primary_cat, n_results=1)
                 memory_context = ""
                 if past_fixes:
                     match = past_fixes[0]
-                    repo_name = match.get("repo", "unknown")
-                    past_err = match.get("past_error", "")
-                    past_fix = match.get("fix_patch", "")
-                    
-                    msg = f"✨ Found similar past error from repo: {repo_name}"
-                    details = f"Past Error: {past_err}\nPast Fix Applied:\n{past_fix}"
-                    
-                    yield f"data: {json.dumps({'step': 'memory', 'status': 'success', 'message': msg, 'details': details})}\n\n"
-                    
-                    memory_context = f"\n\nCRITICAL CONTEXT: I have seen a very similar error in the past. Here is how I successfully fixed it before. Try to adapt this past fix to the current code:\nPast Error: {past_err}\nPast Fix Applied:\n{past_fix}"
+                    memory_context = f"\n\nCRITICAL CONTEXT: Found a past {match['category']} fix from history:\n{match['fix_patch']}"
+                    yield f"data: {json.dumps({'step': 'memory', 'status': 'done', 'message': f'✅ Memory Crystal matched a pattern for {match['category']}!', 'details': match['fix_patch']})}\n\n"
                 else:
-                    yield f"data: {json.dumps({'step': 'memory', 'status': 'done', 'message': f'No matching past fixes found. Reasoning from scratch.'})}\n\n"
+                    memory_context = ""
+                    yield f"data: {json.dumps({'step': 'memory', 'status': 'done', 'message': '🧠 No specific past pattern found. Reasoning from first principles.'})}\n\n"
             except Exception as mem_err:
                 memory_context = ""
-                yield f"data: {json.dumps({'step': 'memory', 'status': 'error', 'message': f'Failed to query Memory Crystal: {mem_err}'})}\n\n"
+                yield f"data: {json.dumps({'step': 'memory', 'status': 'error', 'message': f'Memory Crystal error: {mem_err}'})}\n\n"
 
-            # --- Step 4: Solver — AI writes the fix ---
-            yield f"data: {json.dumps({'step': 'solve', 'status': 'running', 'message': '🔧 Solver Agent writing multi-file fix...' if not broken_file else f'🔧 Solver Agent writing fix for {broken_file}...'})}\n\n"
+            # --- Step 4: Solver — AI writes the fix addressing specific issues ---
+            yield f"data: {json.dumps({'step': 'solve', 'status': 'running', 'message': f'🔧 Solver Agent remediating {len(tech_issues)} categorized issues...'})}\n\n"
 
-            # If broken_file is empty, we ask the solver to identify and fix ALL broken files
-            if not broken_file:
-                solve_prompt = f"""You are a Senior Software Engineer. I have identified multiple errors: {error_summary}.
-Reasoning context: {diagnosis.get('error_details', '')}{memory_context}
+            solve_prompt = f"""You are a Senior Software Engineer. Fix the following categorized issues:
+            
+            Summary: {error_summary}
+            Technical Issues: {json.dumps(tech_issues, indent=2)}
+            {memory_context}
 
-Here is the codebase:
-{code_context}
+            codebase:
+            {code_context}
 
-Identify ALL files that need fixing. Return the COMPLETE content of each fixed file using the following format for EACH file:
-```python
-# path/to/file.py
-<CONTENT>
-```
-Return ONLY the code blocks. No explanations."""
-            else:
-                broken_code = all_code.get(broken_file, "# No file content available")
-                solve_prompt = f"""You are a Senior Software Engineer. Fix the following broken code.
-Error: {diagnosis.get('error_details', error_summary)}{memory_context}
-
-Broken file ({broken_file}):
-```
-{broken_code}
-```
-
-Write the COMPLETE corrected file. Return ONLY the fixed code, no explanations."""
+            Identify ALL files that need fixing. Return the COMPLETE content of each fixed file in markdown code blocks.
+            Include the file path on the first line as a comment. Example:
+            
+            ```python
+            # path/to/file.py
+            def fixed_function():
+                pass
+            ```
+            Return ONLY the code blocks. No explanations."""
 
             solve_response = llm.invoke([HumanMessage(content=solve_prompt)])
             raw_fix = solve_response.content.strip()
