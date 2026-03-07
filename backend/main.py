@@ -242,6 +242,51 @@ Otherwise reply with what is wrong and include the failing test trace."""
     return StreamingResponse(run_healing(), media_type="text/event-stream")
 
 
+# --- Rollback Endpoint ---
+@app.post("/rollback")
+async def rollback_endpoint(req: HealRequest):
+    """
+    Instantly rewinds the main branch to the previous commit (safe state)
+    and then triggers the deployment webhook to restore production.
+    """
+    repo = req.repo
+
+    async def run_rollback():
+        try:
+            # --- Step 1: Trigger GitHub Rollback ---
+            yield f"data: {json.dumps({'step': 'scan', 'status': 'running', 'message': f'🚨 Initiating Emergency Rollback for {repo}...'})}\n\n"
+            
+            result = await github_service.rollback_to_previous_commit(repo, "main")
+            
+            if not result["success"]:
+                yield f"data: {json.dumps({'step': 'error', 'status': 'failed', 'message': f'Rollback failed: {result.get("message")}'})}\n\n"
+                return
+                
+            commit_url = result.get("commit_url", "")
+            yield f"data: {json.dumps({'step': 'push', 'status': 'done', 'message': f'✅ GitHub branch rolled back successfully!', 'pr_url': commit_url})}\n\n"
+
+            # --- Step 2: Trigger Webhook to Redeploy ---
+            webhook_url = os.getenv("DEPLOYMENT_WEBHOOK")
+            if webhook_url:
+                yield f"data: {json.dumps({'step': 'deploy', 'status': 'running', 'message': '🚢 Triggering webhook to redeploy the previous safe commit...'})}\n\n"
+                deployed = await github_service.trigger_deployment(webhook_url)
+                if deployed:
+                    yield f"data: {json.dumps({'step': 'deploy', 'status': 'done', 'message': '✅ Production rollback deployment triggered!'})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'step': 'deploy', 'status': 'error', 'message': '⚠️ Failed to trigger deployment webhook.'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'step': 'deploy', 'status': 'done', 'message': '✅ Rollback complete (No webhook configured to trigger).'})}\n\n"
+
+            yield f"data: {json.dumps({'step': 'complete', 'status': 'success', 'message': f'🎉 Emergency Rollback Complete! Production stabilized.', 'pr_url': commit_url})}\n\n"
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'step': 'error', 'status': 'failed', 'message': f'Error: {repr(e)}'})}\n\n"
+
+    return StreamingResponse(run_rollback(), media_type="text/event-stream")
+
+
 # --- Dashboard & Webhook ---
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard(request: Request):

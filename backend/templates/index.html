@@ -100,6 +100,10 @@
                             class="w-full bg-blue-600 hover:bg-blue-500 transition text-xs py-1.5 rounded text-white flex justify-center items-center gap-2 shadow-lg shadow-blue-900/50">
                             <i class="fa-solid fa-wand-magic-sparkles"></i> Analyze & Heal Repo
                         </button>
+                        <button onclick="triggerRollback('PDK45/neoverse-test-pipeline')"
+                            class="w-full bg-orange-600 hover:bg-orange-500 transition text-xs py-1.5 rounded text-white flex justify-center items-center gap-2 shadow-lg shadow-orange-900/50 mt-1">
+                            <i class="fa-solid fa-backward-fast"></i> Trigger Emergency Rollback
+                        </button>
                     </div>
                 </div>
 
@@ -401,6 +405,80 @@
                 const errorDiv = document.createElement('div');
                 errorDiv.className = "mt-2 p-3 bg-red-900/20 text-red-400 rounded border border-red-500 font-mono text-xs";
                 errorDiv.textContent = "Fatal stream error: " + err.message;
+                aiTextContainer.appendChild(errorDiv);
+            } finally {
+                chatInput.disabled = false;
+            }
+        }
+
+        // Emergency Rollback Trigger
+        async function triggerRollback(repoName) {
+            appendMessage('User', `SYSTEM COMMAND: Initiate EMERGENCY ROLLBACK on repository '${repoName}'`);
+            const aiTextContainer = appendMessage('AI', 'Connecting to GitHub API to revert commit history safely...');
+            chatInput.disabled = true;
+
+            try {
+                const response = await fetch('/rollback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo: repoName })
+                });
+
+                if (!response.body) throw new Error("ReadableStream not supported.");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = "";
+                let hasClearedInitial = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop(); 
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (!hasClearedInitial) {
+                                    aiTextContainer.textContent = "";
+                                    hasClearedInitial = true;
+                                }
+
+                                const stepDiv = document.createElement('div');
+                                stepDiv.className = "mt-2 p-3 bg-slate-900 rounded border border-orange-700 font-mono text-xs";
+
+                                let statusColor = "text-orange-400";
+                                if (data.status === "done") statusColor = "text-green-400";
+                                if (data.status === "error" || data.status === "failed") statusColor = "text-red-400";
+                                if (data.status === "success") statusColor = "text-emerald-400 font-bold";
+
+                                let contentHtml = `<span class="${statusColor}">[${data.step.toUpperCase()}]</span> ${data.message}`;
+
+                                if (data.pr_url) {
+                                    contentHtml += `<br><a href="${data.pr_url}" target="_blank" class="text-orange-400 underline mt-2 inline-block"><i class="fa-solid fa-code-commit"></i> View Rollback Commit</a>`;
+                                }
+
+                                stepDiv.innerHTML = contentHtml;
+                                aiTextContainer.appendChild(stepDiv);
+                                chatWindow.scrollTop = chatWindow.scrollHeight;
+
+                                updateLangGraphState(data.step, data.status, data.message);
+
+                            } catch (e) {
+                                console.error("Error parsing SSE JSON:", e, line);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = "mt-2 p-3 bg-red-900/20 text-red-400 rounded border border-red-500 font-mono text-xs";
+                errorDiv.textContent = "Fatal rollback stream error: " + err.message;
                 aiTextContainer.appendChild(errorDiv);
             } finally {
                 chatInput.disabled = false;
