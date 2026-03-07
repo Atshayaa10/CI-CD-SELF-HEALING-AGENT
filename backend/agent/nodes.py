@@ -249,6 +249,7 @@ async def deployer_node(state: AgentState):
         print("  -> AI safely auto-merged the PR.")
         status = "PR successfully merged. "
         webhook_url = os.getenv("DEPLOYMENT_WEBHOOK")
+        
         if webhook_url:
             deployed = await github_service.trigger_deployment(webhook_url)
             if deployed:
@@ -257,25 +258,27 @@ async def deployer_node(state: AgentState):
             else:
                 status += "Failed to trigger deployment webhook."
                 print("  -> Webhook failed to return 200.")
+        else:
             status += "No DEPLOYMENT_WEBHOOK configured."
             print("  -> Skipped deploy webhook (not in .env).")
             
-            # --- Save to Memory Crystal ---
+        # --- Save ALL fixed files to Memory Crystal ---
         try:
             from agent.tools.memory_crystal import save_fix_to_memory
             repo = state.get("repository", "unknown/repo")
             error_details = state.get("error_summary", "")
-            context_files = state.get("file_contents", {})
-            broken_file = list(context_files.items())[0][0] if context_files else "unknown_file.py"
-            fixed_code = state.get("proposed_patch", "")
             
-            # Use the first issue's category
+            # Use the actual fixed files from the Solver's patch
+            from agent.tools.test_runner import extract_files_from_patch
+            fixed_files = await extract_files_from_patch(state.get("proposed_patch", ""))
+            
             primary_issue = state.get("technical_issues", [{}])[0]
             issue_cat = primary_issue.get("category", "General")
 
-            if fixed_code and error_details:
-                save_fix_to_memory(repo, error_details, broken_file, fixed_code, issue_category=issue_cat)
-                print(f"  -> [MEMORY] Fix successfully etched into the Memory Crystal under category: {issue_cat}!")
+            if fixed_files and error_details:
+                for f_path, f_code in fixed_files.items():
+                    save_fix_to_memory(repo, error_details, f_path, f_code, issue_category=issue_cat)
+                print(f"  -> [MEMORY] {len(fixed_files)} fixes etched into the Memory Crystal under category: {issue_cat}!")
         except Exception as e:
             print(f"  -> [MEMORY] Warning: Failed to write to Memory Crystal: {e}")
             

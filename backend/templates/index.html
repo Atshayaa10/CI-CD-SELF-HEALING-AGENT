@@ -276,13 +276,14 @@
             }
         });
 
-        // GitHub Multi-Repo Auth Flow
+        // GitHub Multi-Repo Auth Flow (Secure In-Memory only)
+        let userGithubToken = "";
+
         async function promptGitHubPAT() {
-            const currentToken = localStorage.getItem('github_pat');
-            const token = prompt("Secure Auth: Enter your GitHub Personal Access Token (PAT) to analyze and fetch your repositories across the dashboard.", currentToken || "");
+            const token = prompt("Secure Auth: Enter your GitHub Personal Access Token (PAT) for this session. It will NOT be stored permanently.", userGithubToken || "");
             if (!token) return;
             
-            localStorage.setItem('github_pat', token);
+            userGithubToken = token;
             const btn = document.getElementById('github-connect-btn');
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Connecting...';
             
@@ -367,25 +368,9 @@
             appendMessage('AI', 'GitHub Federation active! Safely fetched <b class="text-blue-300">' + repos.length + '</b> repositories via token. Hover over any repository on the left to inject an AI Healing agent instance or trigger rollbacks across your infrastructure.', true);
         }
 
-        // Check if token exists on load
+        // Autoloading from localStorage removed for security compliance.
         window.addEventListener('load', () => {
-            const token = localStorage.getItem('github_pat');
-            if (token) {
-                // Silently attempt reconnect
-                fetch('/api/github/repos', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: token })
-                }).then(r => r.json()).then(data => {
-                    if (data.success) {
-                        const btn = document.getElementById('github-connect-btn');
-                        btn.innerHTML = '<i class="fa-brands fa-github text-green-400"></i> Connected';
-                        btn.classList.replace('bg-slate-700', 'bg-green-900/40');
-                        btn.classList.add('border-green-600/50', 'text-green-100');
-                        renderRepositories(data.repos);
-                    }
-                }).catch(e => console.log("Silent auth failed", e));
-            }
+            console.log("Opalite Security: Token persistence disabled.");
         });
 
         // Mock Webhook (Original)
@@ -422,7 +407,7 @@
                 const response = await fetch('/heal', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ repo: repoName })
+                    body: JSON.stringify({ repo: repoName, token: userGithubToken })
                 });
 
                 if (!response.body) throw new Error("ReadableStream not supported.");
@@ -554,7 +539,7 @@
                 const response = await fetch('/rollback', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ repo: repoName })
+                    body: JSON.stringify({ repo: repoName, token: userGithubToken })
                 });
 
                 if (!response.body) throw new Error("ReadableStream not supported.");

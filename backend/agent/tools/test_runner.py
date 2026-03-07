@@ -53,32 +53,48 @@ async def run_integration_tests(repo: str, commit_sha: str, files_to_write: Dict
     """
     Clones the repository locally in a temp directory, applies the dict of file changes,
     and runs pytest. Returns (is_success, test_output).
+    Hardened against RCE and Token Leakage.
     """
     token = os.getenv("GITHUB_TOKEN")
     if not token:
         return False, "Error: GITHUB_TOKEN not found for cloning."
         
-    clone_url = f"https://{token}@github.com/{repo}.git"
+    # Security: Use git -c http.extraHeader to pass the token securely instead of embedding it in the URL
+    clone_url = f"https://github.com/{repo}.git"
+    auth_header = f"Authorization: token {token}"
+    
     test_dir = tempfile.mkdtemp(prefix="opalite_sandbox_")
     
     try:
         print(f"  [Sandbox] Created environment at: {test_dir}")
         
-        def run_command_in_shell(cmd: str, cwd: str):
-            # Using shell=True for Windows compatibility with git/pytest aliases
-            return subprocess.run(cmd, cwd=cwd, shell=True, capture_output=True, text=True)
+        async def run_proc(cmd: list, cwd: str):
+            # Security: NO shell=True. Use direct list-style execution to prevent RCE.
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            return proc.returncode, stdout.decode(), stderr.decode()
 
-        # 1. Clone the repo
-        print(f"  [Sandbox] Cloning {repo}...")
-        res = await asyncio.to_thread(run_command_in_shell, f"git clone {clone_url} .", test_dir)
-        if res.returncode != 0:
-            return False, f"Git clone failed:\n{res.stderr}\n{res.stdout}"
+        # 1. Clone the repo securely
+        print(f"  [Sandbox] Cloning {repo} securely...")
+        # git -c http.extraHeader="Authorization: token <token>" clone <url> .
+        retcode, stdout, stderr = await run_proc(
+            ["git", "-c", f"http.extraHeader={auth_header}", "clone", clone_url, "."], 
+            test_dir
+        )
+        if retcode != 0:
+            # Redact token from logs just in case
+            safe_stderr = stderr.replace(token, "********")
+            return False, f"Git clone failed:\n{safe_stderr}"
 
-        # 2. Checkout the commit (default to main if commit_sha is empty or special)
+        # 2. Checkout the commit
         checkout_target = commit_sha if commit_sha and len(commit_sha) > 5 else "main"
         print(f"  [Sandbox] Checking out {checkout_target}...")
-        res = await asyncio.to_thread(run_command_in_shell, f"git checkout {checkout_target}", test_dir)
-        # We don't necessarily fail if checkout fails (might already be on main), but we log it
+        retcode, stdout, stderr = await run_proc(["git", "checkout", checkout_target], test_dir)
         
         # 3. Apply the patch
         if not files_to_write:
@@ -86,28 +102,28 @@ async def run_integration_tests(repo: str, commit_sha: str, files_to_write: Dict
             
         for filepath, content in files_to_write.items():
             if not filepath or filepath.strip() == "":
-                print("  [Sandbox] Warning: Skipping file with empty path.")
                 continue
                 
-            # Clean path to prevent escape
             clean_path = filepath.strip().replace('\\', '/')
             if clean_path.startswith('/'): clean_path = clean_path[1:]
             
-            full_path = os.path.join(test_dir, clean_path)
-            print(f"  [Sandbox] Preparing to write to: {full_path}")
-            
+            # Security: Path traversal check
+            full_path = os.path.normpath(os.path.join(test_dir, clean_path))
+            if not full_path.startswith(os.path.normpath(test_dir)):
+                print(f"  [Sandbox] Security Block: Path traversal attempt blocked: {clean_path}")
+                continue
+
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, 'w', encoding='utf-8') as f:
                 f.write(content)
-            print(f"  [Sandbox] Patched: {clean_path}")
             
-        # 4. Run tests
+        # 4. Run tests securely
         print("  [Sandbox] Running tests via 'python -m pytest'...")
-        # Use python -m pytest to ensure it uses the venv/path correctly
-        res = await asyncio.to_thread(run_command_in_shell, "python -m pytest", test_dir)
+        # Security: Hard-coded safe entry point, no arbitrary shell commands.
+        retcode, stdout, stderr = await run_proc(["python", "-m", "pytest", "-v"], test_dir)
         
-        output = f"STDOUT:\n{res.stdout}\n\nSTDERR:\n{res.stderr}"
-        is_success = (res.returncode == 0)
+        output = f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}"
+        is_success = (retcode == 0)
         
         print(f"  [Sandbox] Result: {'PASSED' if is_success else 'FAILED'}")
         return is_success, output

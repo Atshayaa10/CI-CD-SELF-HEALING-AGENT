@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
 
 class HealRequest(BaseModel):
     repo: str  # e.g. "PDK45/neoverse-test-pipeline"
+    token: str = None
 
 class AuthRequest(BaseModel):
     token: str
@@ -82,6 +83,15 @@ async def heal_endpoint(req: HealRequest):
     Streams every step live to the frontend as Server-Sent Events (SSE).
     """
     repo = req.repo
+    # Auth Consistency: Use provided token if available, else fallback to env
+    active_token = req.token or os.getenv("GITHUB_TOKEN")
+    if not active_token:
+        async def err_gen():
+            yield f"data: {json.dumps({'step': 'error', 'status': 'failed', 'message': 'Authentication Error: GITHUB_TOKEN not found.'})}\n\n"
+        return StreamingResponse(err_gen(), media_type="text/event-stream")
+    
+    # Temporarily override service token for this request context
+    github_service.token = active_token
 
     async def run_healing():
         try:
@@ -245,18 +255,13 @@ You MUST reply with 'APPROVE' at the START of your response if the fix is correc
             else:
                 yield f"data: {json.dumps({'step': 'critic', 'status': 'done', 'message': f'⚠️ Critic feedback: {critic_verdict[:100]}...', 'details': critic_verdict})}\n\n"
 
-            # --- Step 6: Push the fixes to GitHub ---
+            # --- Step 6: Push the fixes to GitHub (Multi-file Support) ---
             yield f"data: {json.dumps({'step': 'push', 'status': 'running', 'message': f'🚀 Creating branch & committing {len(files_map)} files...'})}\n\n"
 
-            # Special logic: create_fix_branch_and_pr only handles 1 file right now. 
-            # We will use the first one if multiple exist, or we can improve it. 
-            # For the demo, let's just push the core fix.
-            first_file = list(files_map.keys())[0]
             pr_url = await github_service.create_fix_branch_and_pr(
                 repo_full_name=repo,
                 base_branch="main",
-                file_path=first_file,
-                new_content=files_map[first_file],
+                files_map=files_map,
                 error_summary=error_summary
             )
             
@@ -281,10 +286,11 @@ You MUST reply with 'APPROVE' at the START of your response if the fix is correc
                             status_text += "Deployment webhook triggered successfully!"
                             yield f"data: {json.dumps({'step': 'deploy', 'status': 'done', 'message': '✅ CD Success: ' + status_text})}\n\n"
                             
-                            # Step 7.5: Save to Memory Crystal
+                            # Step 7.5: Save to Memory Crystal for ALL fixed files
                             try:
-                                save_fix_to_memory(repo, error_summary, broken_file, fixed_code)
-                                yield f"data: {json.dumps({'step': 'memory', 'status': 'success', 'message': '💎 Fix successfully etched into the Memory Crystal!'})}\n\n"
+                                for f_path, f_code in files_map.items():
+                                    save_fix_to_memory(repo, error_summary, f_path, f_code)
+                                yield f"data: {json.dumps({'step': 'memory', 'status': 'success', 'message': f'💎 {len(files_map)} fixes etched into the Memory Crystal!'})}\n\n"
                             except Exception as mem_err:
                                 yield f"data: {json.dumps({'step': 'memory', 'status': 'error', 'message': f'Could not save to Memory Crystal: {mem_err}'})}\n\n"
                         else:
@@ -296,8 +302,9 @@ You MUST reply with 'APPROVE' at the START of your response if the fix is correc
                         
                         # Save to Memory Crystal even if no webhook
                         try:
-                            save_fix_to_memory(repo, error_summary, broken_file, fixed_code)
-                            yield f"data: {json.dumps({'step': 'memory', 'status': 'success', 'message': '💎 Fix successfully etched into the Memory Crystal!'})}\n\n"
+                            for f_path, f_code in files_map.items():
+                                save_fix_to_memory(repo, error_summary, f_path, f_code)
+                            yield f"data: {json.dumps({'step': 'memory', 'status': 'success', 'message': f'💎 {len(files_map)} fixes etched into the Memory Crystal!'})}\n\n"
                         except Exception as mem_err:
                             yield f"data: {json.dumps({'step': 'memory', 'status': 'error', 'message': f'Could not save to Memory Crystal: {mem_err}'})}\n\n"
                 else:
@@ -321,6 +328,15 @@ async def rollback_endpoint(req: HealRequest):
     and then triggers the deployment webhook to restore production.
     """
     repo = req.repo
+    # Auth Consistency: Use provided token if available, else fallback to env
+    active_token = req.token or os.getenv("GITHUB_TOKEN")
+    if not active_token:
+        async def err_gen():
+            yield f"data: {json.dumps({'step': 'error', 'status': 'failed', 'message': 'Authentication Error: GITHUB_TOKEN not found.'})}\n\n"
+        return StreamingResponse(err_gen(), media_type="text/event-stream")
+    
+    # Temporarily override service token for this request context
+    github_service.token = active_token
 
     async def run_rollback():
         try:

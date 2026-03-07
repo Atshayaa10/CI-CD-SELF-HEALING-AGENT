@@ -60,9 +60,12 @@ class GithubService:
 
     async def create_fix_branch_and_pr(
         self, repo_full_name: str, base_branch: str,
-        file_path: str, new_content: str, error_summary: str
+        files_map: dict, error_summary: str
     ) -> str:
-        """Creates a new branch, commits the fixed file, and opens a Pull Request. Returns the PR URL."""
+        """
+        Creates a new branch, commits MULTIPLE files, and opens a Pull Request.
+        Returns the PR URL.
+        """
         import time
         branch_name = f"ai-fix/{int(time.time())}"
         headers = self._headers()
@@ -74,30 +77,59 @@ class GithubService:
             ref_r.raise_for_status()
             base_sha = ref_r.json()["object"]["sha"]
 
-            # 2. Create fix branch
+            # 2. Get the tree SHA of the base commit
+            commit_url = f"https://api.github.com/repos/{repo_full_name}/git/commits/{base_sha}"
+            commit_r = await client.get(commit_url, headers=headers)
+            commit_r.raise_for_status()
+            base_tree_sha = commit_r.json()["tree"]["sha"]
+
+            # 3. Create blobs/tree objects for each file
+            tree_items = []
+            for file_path, content in files_map.items():
+                tree_items.append({
+                    "path": file_path,
+                    "mode": "100644",
+                    "type": "blob",
+                    "content": content
+                })
+
+            # 4. Create a new tree
+            tree_url = f"https://api.github.com/repos/{repo_full_name}/git/trees"
+            tree_r = await client.post(tree_url, headers=headers, json={
+                "base_tree": base_tree_sha,
+                "tree": tree_items
+            })
+            tree_r.raise_for_status()
+            new_tree_sha = tree_r.json()["sha"]
+
+            # 5. Create a new commit
+            commit_payload = {
+                "message": f"fix(ai): {error_summary[:80]}",
+                "tree": new_tree_sha,
+                "parents": [base_sha]
+            }
+            new_commit_r = await client.post(
+                f"https://api.github.com/repos/{repo_full_name}/git/commits",
+                headers=headers,
+                json=commit_payload
+            )
+            new_commit_r.raise_for_status()
+            new_commit_sha = new_commit_r.json()["sha"]
+
+            # 6. Create fix branch pointing to the new commit
             branch_url = f"https://api.github.com/repos/{repo_full_name}/git/refs"
             await client.post(branch_url, headers=headers, json={
-                "ref": f"refs/heads/{branch_name}", "sha": base_sha
+                "ref": f"refs/heads/{branch_name}", 
+                "sha": new_commit_sha
             })
 
-            # 3. Get current file SHA
-            file_url = f"https://api.github.com/repos/{repo_full_name}/contents/{file_path}"
-            file_r = await client.get(file_url, headers=headers, params={"ref": base_branch})
-            file_sha = file_r.json().get("sha", "")
-
-            # 4. Commit the fixed file
-            encoded = base64.b64encode(new_content.encode()).decode()
-            await client.put(file_url, headers=headers, json={
-                "message": f"fix(ai): {error_summary[:80]}",
-                "content": encoded, "sha": file_sha, "branch": branch_name
-            })
-
-            # 5. Open a Pull Request
+            # 7. Open a Pull Request
             pr_url = f"https://api.github.com/repos/{repo_full_name}/pulls"
             pr_r = await client.post(pr_url, headers=headers, json={
                 "title": f"🤖 AI Fix: {error_summary[:60]}",
-                "body": f"**Opalite Auto-Healer** automatically detected and fixed this issue.\n\n**Root Cause:** {error_summary}\n**File:** `{file_path}`",
-                "head": branch_name, "base": base_branch
+                "body": f"**Opalite Auto-Healer** detected and resolved multiple issues.\n\n**Root Cause:** {error_summary}\n**Files Impacted:** {', '.join(files_map.keys())}",
+                "head": branch_name, 
+                "base": base_branch
             })
             return pr_r.json().get("html_url", f"PR creation failed: {pr_r.text[:100]}")
 
