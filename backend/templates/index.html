@@ -7,6 +7,9 @@
     <title>Opalite | CI/CD Auto-Healer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -61,6 +64,28 @@
         #chat-window { scroll-behavior: smooth; }
         .message-ai { background-color: rgba(56, 189, 248, 0.05); border-left: 2px solid #38bdf8; }
         .message-sentinel { background-color: rgba(249, 115, 22, 0.05); border-left: 2px solid #f97316; }
+
+        /* Pipeline Visualizer Styles */
+        .pipeline-scroll::-webkit-scrollbar {
+            height: 6px;
+        }
+        .pipeline-scroll::-webkit-scrollbar-thumb {
+            background-color: #334155;
+            border-radius: 4px;
+        }
+        
+        .pipeline-card { transition: all 0.3s ease; }
+        .pipeline-card.active { border-color: #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.2); }
+        .pipeline-card.success { border-color: #10b981; }
+        .pipeline-card.error { border-color: #ef4444; }
+
+        .pipeline-line { transition: all 0.4s ease; background-color: #334155; }
+        .pipeline-line.active { background-color: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+        .pipeline-line.success { background-color: #10b981; }
+        .pipeline-line.error { background-color: #ef4444; }
+
+        /* Syntax Highlighting overrides for dark theme */
+        .hljs { background: #0f172a !important; padding: 1rem !important; border-radius: 0.5rem; font-size: 0.75rem; }
     </style>
 </head>
 
@@ -88,7 +113,7 @@
         <!-- Left Column: Pipeline Monitoring Sandbox -->
         <section class="w-1/3 flex flex-col gap-6">
             <!-- Active Monitors -->
-            <div class="glass-panel rounded-xl p-5 flex flex-col gap-4 flex-1 h-[50vh] overflow-y-auto">
+            <div class="glass-panel flex-1 rounded-xl p-5 flex flex-col gap-4 overflow-y-auto">
                 <h2 class="text-lg font-semibold border-b border-slate-700 pb-2 flex justify-between items-center">
                     <span><i class="fa-brands fa-github mr-2"></i>Monitored Repos</span>
                     <span class="text-xs font-normal text-slate-400" id="repo-count">Syncing...</span>
@@ -96,23 +121,10 @@
 
                 <div id="repo-list-container" class="flex flex-col gap-3">
                     <!-- Default State -->
-                    <div class="text-center p-4 border border-dashed border-slate-600 rounded-lg opacity-60">
+                    <div class="text-center p-4 border border-dashed border-slate-600 rounded-lg opacity-60 mt-8">
                         <i class="fa-solid fa-cloud-arrow-down text-2xl mb-2 text-slate-400"></i>
                         <p class="text-xs text-slate-400">Connect your GitHub account to sync repositories.</p>
                     </div>
-                </div>
-            </div>
-
-            <!-- Agent State Visualizer -->
-            <div class="glass-panel rounded-xl p-5 flex flex-col h-1/3">
-                <h2 class="text-lg font-semibold border-b border-slate-700 pb-2 mb-3"><i
-                        class="fa-solid fa-network-wired mr-2"></i>LangGraph State</h2>
-                <div class="flex-1 flex flex-col justify-center items-center gap-3 text-slate-400">
-                    <i id="langgraph-icon"
-                        class="fa-solid fa-diagram-project text-4xl mb-2 opacity-50 transition-colors duration-300"></i>
-                    <p id="langgraph-status" class="text-sm text-center font-bold tracking-wider">AWAITING TRIGGER</p>
-                    <p id="langgraph-desc" class="text-xs text-center px-4">Watch the AI nodes execute in real-time
-                        here.</p>
                 </div>
             </div>
         </section>
@@ -120,10 +132,18 @@
         <!-- Right Column: Interactive Chat & Agent Log -->
         <section class="w-2/3 glass-panel rounded-xl flex flex-col overflow-hidden relative">
             <!-- Header -->
-            <div class="bg-slate-800/80 px-6 py-4 border-b border-slate-700 flex justify-between items-center">
+            <div class="bg-slate-800/80 px-6 py-4 border-b border-slate-700 flex justify-between items-center z-10 shrink-0">
                 <h2 class="text-lg font-semibold"><i class="fa-solid fa-terminal mr-2"></i>Agent Console & Chat</h2>
                 <div class="flex gap-2 text-xs">
-                    <span class="px-2 py-1 bg-slate-700 rounded text-slate-300">Model: Llama-3.3-70B (Groq)</span>
+                    <span class="px-2 py-1 bg-slate-700 rounded text-slate-300 border border-slate-600">Model: Llama-3.3-70B (Groq)</span>
+                </div>
+            </div>
+
+            <!-- CircleCI-Style Agentic Pipeline Viewer -->
+            <div class="w-full bg-slate-900 border-b border-slate-700 p-4 pb-6 overflow-x-auto pipeline-scroll shrink-0" id="pipeline-container">
+                <div class="flex items-center min-w-max px-2" id="pipeline-nodes">
+                    <!-- Nodes will be injected here by JS -->
+                    <div class="text-xs text-slate-500 italic"><i class="fa-solid fa-chart-line mr-2"></i>Agent Pipeline waiting for trigger...</div>
                 </div>
             </div>
 
@@ -161,10 +181,18 @@
         const chatInput = document.getElementById('chat-input');
         const chatWindow = document.getElementById('chat-window');
 
-        // LangGraph UI Elements
-        const lgIcon = document.getElementById('langgraph-icon');
-        const lgStatus = document.getElementById('langgraph-status');
-        const lgDesc = document.getElementById('langgraph-desc');
+        // Pipeline Viewer Logic
+        const pipelineSteps = [
+            { id: 'scan', label: 'Scanner', icon: 'fa-search' },
+            { id: 'diagnose', label: 'Diagnostician', icon: 'fa-stethoscope' },
+            { id: 'memory', label: 'Memory Fetch', icon: 'fa-brain' },
+            { id: 'solve', label: 'Solver', icon: 'fa-wand-sparkles' },
+            { id: 'verify', label: 'Verifier (Test)', icon: 'fa-flask-vial' },
+            { id: 'critic', label: 'Critic', icon: 'fa-gavel' },
+            { id: 'push', label: 'Git Commit', icon: 'fa-code-branch' },
+            { id: 'deploy', label: 'Deploy PR', icon: 'fa-rocket' },
+            { id: 'complete', label: 'Complete', icon: 'fa-check-circle' }
+        ];
 
         const stepIcons = {
             'scan': 'fa-magnifying-glass',
@@ -180,28 +208,98 @@
             'error': 'fa-triangle-exclamation'
         };
 
+        function initPipelineViewer() {
+            const container = document.getElementById('pipeline-nodes');
+            container.innerHTML = '';
+            
+            pipelineSteps.forEach((step, index) => {
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'flex items-center shrink-0';
+                
+                const card = document.createElement('div');
+                card.id = `pipeline-node-${step.id}`;
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 w-[160px] shadow-sm ml-2 mr-2 opacity-50 relative';
+                
+                card.innerHTML = `
+                    <div class="h-6 w-6 rounded-full border border-slate-600 flex items-center justify-center bg-slate-900 status-indicator shrink-0">
+                        <i class="fa-solid fa-clock text-[10px] text-slate-500"></i>
+                    </div>
+                    <div class="flex flex-col min-w-0">
+                        <span class="text-xs font-bold text-slate-300 truncate"><i class="fa-solid ${step.icon} mr-1 opacity-70"></i>${step.label}</span>
+                        <span class="text-[9px] text-slate-500 uppercase status-text tracking-wider truncate">Waiting</span>
+                    </div>
+                `;
+                nodeDiv.appendChild(card);
+                
+                if (index < pipelineSteps.length - 1) {
+                    const line = document.createElement('div');
+                    line.id = `pipeline-edge-${step.id}`;
+                    line.className = 'w-8 h-0.5 pipeline-line rounded-full';
+                    nodeDiv.appendChild(line);
+                }
+                
+                container.appendChild(nodeDiv);
+            });
+        }
+        
+        // Initialize the empty pipeline map on load
+        initPipelineViewer();
+
         function updateLangGraphState(step, status, message) {
-            lgStatus.textContent = `${status.toUpperCase()}...`;
-            lgDesc.textContent = message;
-
-            const iconClass = stepIcons[step] || 'fa-diagram-project';
-            lgIcon.className = `fa-solid ${iconClass} text-5xl mb-2 transition-all duration-500 scale-110`;
-
-            // Reset all effects
-            lgIcon.classList.remove('text-blue-400', 'animate-pulse', 'text-green-400', 'text-red-400', 'text-purple-400', 'text-orange-400', 'badge-glow');
-
+            // Find current step index
+            const stepIdx = pipelineSteps.findIndex(s => s.id === step);
+            if(stepIdx === -1) return;
+            
+            // Mark all preceding steps as done (only if moving forward/success)
+            if (status !== 'error' && status !== 'failed') {
+               for(let i=0; i<stepIdx; i++) {
+                   const sid = pipelineSteps[i].id;
+                   const pCard = document.getElementById(`pipeline-node-${sid}`);
+                   const pEdge = document.getElementById(`pipeline-edge-${sid}`);
+                   
+                   pCard.className = 'pipeline-card flex items-center gap-3 bg-slate-800 border border-emerald-500/50 rounded-lg px-4 py-2 w-[160px] shadow-md ml-2 mr-2 opacity-100 success';
+                   pCard.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-check text-[10px] text-emerald-400 font-bold"></i>';
+                   pCard.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-emerald-500 flex items-center justify-center bg-emerald-500/10 status-indicator';
+                   pCard.querySelector('.status-text').textContent = 'DONE';
+                   pCard.querySelector('.status-text').className = 'text-[9px] text-emerald-400 font-bold uppercase status-text tracking-wider truncate';
+                   
+                   if (pEdge) pEdge.className = 'w-8 h-px pipeline-line rounded-full success';
+               }
+            }
+            
+            const card = document.getElementById(`pipeline-node-${step}`);
+            const edge = document.getElementById(`pipeline-edge-${step}`);
+            
             if (status === 'running') {
-                lgIcon.classList.add('text-blue-400', 'animate-pulse', 'badge-glow');
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-900 border border-blue-500 rounded-lg px-4 py-2 w-[160px] shadow-lg ml-2 mr-2 opacity-100 active';
+                card.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-spinner fa-spin text-[10px] text-blue-400"></i>';
+                card.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-blue-500 flex items-center justify-center bg-blue-500/20 status-indicator';
+                card.querySelector('.status-text').textContent = 'RUNNING';
+                card.querySelector('.status-text').className = 'text-[9px] text-blue-400 font-black uppercase status-text tracking-wider truncate pulse-blue';
+                
+                // Auto scroll horizontally to current node
+                const container = document.getElementById('pipeline-container');
+                container.scrollTo({ left: card.offsetLeft - 100, behavior: 'smooth' });
+                
+                if (edge) edge.className = 'w-8 h-1 pipeline-line rounded-full active pulse-blue';
+                
             } else if (status === 'done' || status === 'success' || status === 'clean') {
-                lgIcon.classList.add('text-green-400', 'badge-glow');
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-800 border-emerald-500/50 rounded-lg px-4 py-2 w-[160px] shadow-md ml-2 mr-2 opacity-100 success';
+                card.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-check text-[10px] text-emerald-400 font-bold"></i>';
+                card.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-emerald-500 flex items-center justify-center bg-emerald-500/10 status-indicator';
+                card.querySelector('.status-text').textContent = 'DONE';
+                card.querySelector('.status-text').className = 'text-[9px] text-emerald-400 font-bold uppercase status-text tracking-wider truncate';
+                
+                if (edge) edge.className = 'w-8 h-px pipeline-line rounded-full success';
+                
             } else if (status === 'error' || status === 'failed') {
-                lgIcon.classList.add('text-red-400', 'badge-glow');
-            } else if (step === 'memory') {
-                lgIcon.classList.add('text-purple-400', 'badge-glow');
-            } else if (step === 'rollback') {
-                lgIcon.classList.add('text-orange-500', 'badge-glow', 'animate-bounce');
-            } else {
-                lgIcon.classList.add('text-slate-400', 'opacity-50');
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-900 border border-red-500 rounded-lg px-4 py-2 w-[160px] shadow-lg ml-2 mr-2 opacity-100 error pulse-red';
+                card.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-xmark text-[10px] text-red-400 font-bold"></i>';
+                card.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-red-500 flex items-center justify-center bg-red-500/20 status-indicator';
+                card.querySelector('.status-text').textContent = 'FAILED';
+                card.querySelector('.status-text').className = 'text-[9px] text-red-500 font-black uppercase status-text tracking-wider truncate';
+                
+                if (edge) edge.className = 'w-8 h-px pipeline-line rounded-full error';
             }
         }
 
@@ -276,14 +374,13 @@
             }
         });
 
-        // GitHub Multi-Repo Auth Flow (Secure In-Memory only)
-        let userGithubToken = "";
-
+        // GitHub Multi-Repo Auth Flow
         async function promptGitHubPAT() {
-            const token = prompt("Secure Auth: Enter your GitHub Personal Access Token (PAT) for this session. It will NOT be stored permanently.", userGithubToken || "");
+            const currentToken = localStorage.getItem('github_pat');
+            const token = prompt("Secure Auth: Enter your GitHub Personal Access Token (PAT) to analyze and fetch your repositories across the dashboard.", currentToken || "");
             if (!token) return;
             
-            userGithubToken = token;
+            localStorage.setItem('github_pat', token);
             const btn = document.getElementById('github-connect-btn');
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Connecting...';
             
@@ -368,9 +465,25 @@
             appendMessage('AI', 'GitHub Federation active! Safely fetched <b class="text-blue-300">' + repos.length + '</b> repositories via token. Hover over any repository on the left to inject an AI Healing agent instance or trigger rollbacks across your infrastructure.', true);
         }
 
-        // Autoloading from localStorage removed for security compliance.
+        // Check if token exists on load
         window.addEventListener('load', () => {
-            console.log("Opalite Security: Token persistence disabled.");
+            const token = localStorage.getItem('github_pat');
+            if (token) {
+                // Silently attempt reconnect
+                fetch('/api/github/repos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                }).then(r => r.json()).then(data => {
+                    if (data.success) {
+                        const btn = document.getElementById('github-connect-btn');
+                        btn.innerHTML = '<i class="fa-brands fa-github text-green-400"></i> Connected';
+                        btn.classList.replace('bg-slate-700', 'bg-green-900/40');
+                        btn.classList.add('border-green-600/50', 'text-green-100');
+                        renderRepositories(data.repos);
+                    }
+                }).catch(e => console.log("Silent auth failed", e));
+            }
         });
 
         // Mock Webhook (Original)
@@ -407,7 +520,7 @@
                 const response = await fetch('/heal', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ repo: repoName, token: userGithubToken })
+                    body: JSON.stringify({ repo: repoName })
                 });
 
                 if (!response.body) throw new Error("ReadableStream not supported.");
@@ -478,7 +591,6 @@
                                 `;
 
                                 if (data.details) {
-                                    // If it's the memory crystal match, let's style it specially
                                     if (data.step === "memory" && data.status === "done") {
                                         contentHtml += `
                                             <div class="mt-3 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-200 italic">
@@ -487,18 +599,58 @@
                                         `;
                                     }
                                     
-                                    const safeDetails = data.details.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-                                    contentHtml += `
-                                    <details class="mt-3 bg-slate-950/50 rounded-lg p-2 border border-slate-800 cursor-pointer group">
-                                        <summary class="text-[10px] text-slate-500 font-bold hover:text-slate-300 select-none flex items-center gap-2">
-                                            <i class="fa-solid fa-square-plus group-open:hidden"></i>
-                                            <i class="fa-solid fa-square-minus hidden group-open:block"></i>
-                                            AGENT WORKSPACE DATA
-                                        </summary>
-                                        <pre class="mt-2 text-[10px] text-slate-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed bg-slate-900 p-2 rounded">${safeDetails}</pre>
-                                    </details>`;
+                                    // Custom visualization for Diagnostician JSON
+                                    if (data.step === 'diagnose') {
+                                        try {
+                                            const issueData = JSON.parse(data.details);
+                                            contentHtml += `
+                                            <div class="mt-3 grid grid-cols-2 gap-3 pb-2 border-b border-red-500/20">
+                                                <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                                                    <span class="text-[9px] text-red-400 font-bold uppercase tracking-wider block mb-1">Issue Type</span>
+                                                    <span class="text-xs text-white">${issueData.issue_category || issueData.issue_type || 'Unknown'}</span>
+                                                </div>
+                                                <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                                                    <span class="text-[9px] text-red-400 font-bold uppercase tracking-wider block mb-1">Broken File</span>
+                                                    <span class="text-xs text-white font-mono break-all">${issueData.broken_file || 'N/A'}</span>
+                                                </div>
+                                            </div>
+                                            <div class="mt-2 text-xs text-slate-300 bg-slate-900 p-3 rounded-lg border border-slate-800">
+                                                <span class="text-[9px] text-slate-500 font-bold uppercase tracking-wider block mb-1">Summary</span>
+                                                ${issueData.error_summary || 'N/A'}
+                                            </div>`;
+                                        } catch (e) {
+                                            const safeDetails = data.details.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                            contentHtml += `<pre class="mt-2 text-[10px] text-slate-400 overflow-x-auto p-2 rounded">${safeDetails}</pre>`;
+                                        }
+                                    } 
+                                    // Custom visualization for Code Solver
+                                    else if (data.step === 'solve' || data.step === 'critic') {
+                                        // Render markdown with Marked.js
+                                        const renderedMd = marked.parse(data.details);
+                                        contentHtml += `
+                                        <details open class="mt-3 bg-slate-950/80 rounded-lg p-3 border border-slate-800 group">
+                                            <summary class="text-[10px] text-blue-400 font-bold select-none cursor-pointer mb-2">
+                                                <i class="fa-solid fa-code"></i> AGENT CODE PATCH
+                                            </summary>
+                                            <div class="text-[11px] text-slate-300 font-mono leading-relaxed overflow-x-auto">
+                                                ${renderedMd}
+                                            </div>
+                                        </details>`;
+                                    } 
+                                    else {
+                                        // Default workspace data
+                                        const safeDetails = data.details.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                        contentHtml += `
+                                        <details class="mt-3 bg-slate-950/50 rounded-lg p-2 border border-slate-800 cursor-pointer group">
+                                            <summary class="text-[10px] text-slate-500 font-bold hover:text-slate-300 select-none flex items-center gap-2">
+                                                <i class="fa-solid fa-square-plus group-open:hidden"></i>
+                                                <i class="fa-solid fa-square-minus hidden group-open:block"></i>
+                                                AGENT WORKSPACE DATA
+                                            </summary>
+                                            <pre class="mt-2 text-[10px] text-slate-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed bg-slate-900 p-2 rounded">${safeDetails}</pre>
+                                        </details>`;
+                                    }
                                 }
-
                                 if (data.pr_url) {
                                     contentHtml += `
                                         <a href="${data.pr_url}" target="_blank" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 transition text-[10px] py-2 rounded-lg text-white flex justify-center items-center gap-2 font-bold shadow-lg shadow-emerald-900/30">
@@ -508,6 +660,12 @@
 
                                 stepDiv.innerHTML = contentHtml;
                                 aiTextContainer.appendChild(stepDiv);
+                                
+                                // Apply syntax highlighting to new code blocks
+                                stepDiv.querySelectorAll('pre code').forEach((block) => {
+                                    hljs.highlightElement(block);
+                                });
+
                                 chatWindow.scrollTop = chatWindow.scrollHeight;
 
                                 // Update the visualizer
@@ -539,7 +697,7 @@
                 const response = await fetch('/rollback', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ repo: repoName, token: userGithubToken })
+                    body: JSON.stringify({ repo: repoName })
                 });
 
                 if (!response.body) throw new Error("ReadableStream not supported.");

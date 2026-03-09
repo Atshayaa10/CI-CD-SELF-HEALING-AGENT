@@ -94,6 +94,14 @@ async def heal_endpoint(req: HealRequest):
     github_service.token = active_token
 
     async def run_healing():
+        import asyncio
+        async def ainvoke_with_keepalive(messages):
+            task = asyncio.create_task(llm.ainvoke(messages))
+            while not task.done():
+                yield ": keepalive\n\n"
+                await asyncio.sleep(2)
+            yield task.result()
+
         try:
             # --- Step 1: Scan the repository ---
             yield f"data: {json.dumps({'step': 'scan', 'status': 'running', 'message': f'Scanning repository {repo}...'})}\n\n"
@@ -114,8 +122,19 @@ async def heal_endpoint(req: HealRequest):
             yield f"data: {json.dumps({'step': 'diagnose', 'status': 'running', 'message': '🔍 Diagnostician Agent analyzing code for errors...'})}\n\n"
 
             code_context = ""
+            MAX_CHARS_PER_FILE = 15000
+            MAX_TOTAL_CHARS = 20000
+            
             for path, code in all_code.items():
-                code_context += f"\n--- FILE: {path} ---\n{code}\n--- END ---\n"
+                if len(code_context) > MAX_TOTAL_CHARS:
+                    code_context += f"\n--- [TRUNCATED: Max context size reached] ---\n"
+                    break
+                    
+                file_content = code
+                if len(file_content) > MAX_CHARS_PER_FILE:
+                    file_content = file_content[:MAX_CHARS_PER_FILE] + f"\n... [TRUNCATED: File too large. Showing first {MAX_CHARS_PER_FILE} chars] ..."
+                
+                code_context += f"\n--- FILE: {path} ---\n{file_content}\n--- END ---\n"
 
             diag_prompt = f"""You are an expert DevOps engineer and code reviewer. Analyze the failure and categorize it into specific "Technical Issues".
             
@@ -135,9 +154,14 @@ async def heal_endpoint(req: HealRequest):
                     }}
                 ]
             }}
+            }}
             Return ONLY the JSON."""
 
-            diag_response = llm.invoke([HumanMessage(content=diag_prompt)])
+            diag_response = None
+            async for x in ainvoke_with_keepalive([HumanMessage(content=diag_prompt)]):
+                if isinstance(x, str): yield x
+                else: diag_response = x
+                
             diag_text = diag_response.content.strip()
 
             import re
@@ -196,9 +220,14 @@ async def heal_endpoint(req: HealRequest):
             def fixed_function():
                 pass
             ```
+            ```
             Return ONLY the code blocks. No explanations."""
 
-            solve_response = llm.invoke([HumanMessage(content=solve_prompt)])
+            solve_response = None
+            async for x in ainvoke_with_keepalive([HumanMessage(content=solve_prompt)]):
+                if isinstance(x, str): yield x
+                else: solve_response = x
+                
             raw_fix = solve_response.content.strip()
             
             from agent.tools.test_runner import extract_files_from_patch
@@ -247,7 +276,11 @@ Test Output Trimmed:
 
 You MUST reply with 'APPROVE' at the START of your response if the fix is correct. Otherwise, explain what is missing."""
 
-            critic_response = llm.invoke([HumanMessage(content=critic_prompt)])
+            critic_response = None
+            async for x in ainvoke_with_keepalive([HumanMessage(content=critic_prompt)]):
+                if isinstance(x, str): yield x
+                else: critic_response = x
+                
             critic_verdict = critic_response.content.strip()
 
             if critic_verdict.upper().startswith("APPROVE"):

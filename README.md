@@ -1,108 +1,82 @@
-# 🤖 Opalite OS — Autonomous CI/CD Self-Healing Agent
+# 🏆 Opalite OS — Autonomous CI/CD Self-Healing Engine
 
-An AI-powered SaaS platform that doesn't just notify you about bugs—it **heals** them. Opalite OS autonomously detects, diagnoses, and fixes failing CI/CD pipelines across multiple repositories. It features a cross-repository **Memory Crystal (RAG)** to learn from past fixes, **Multi-Repo Federation** via GitHub Auth, and **Emergency Rollbacks** to preserve production uptime.
-
-> **AI Engine:** Groq · Llama 3.3-70B · Ultra-Low Latency
-
----
-
-## 🎯 The Autonomous Healing Workflow
-
-1.  **Detection:** A GitHub Webhook signals a failing build.
-2.  **Memory Crystal (RAG):** The agent cross-references the error against its codebase-wide memory (ChromaDB-lite) to retrieve similar past fixes.
-3.  **Diagnosis:** The *Diagnostician* analyzes truncated logs to find the root cause (Syntax, IaC, or Logic).
-4.  **Sandbox Solve:** The *Solver* drafts a repair, which the *Verifier* tests in a secure sandbox.
-5.  **Deployment:** Upon approval, the agent creates a branch, opens a PR, auto-merges, and triggers the deployment.
-6.  **Fail-Safe:** If the live server crashes post-deploy, the **Emergency Rollback** instants reverts the Git tree to its last stable state.
+<div align="center">
+  <h2>🌟 Top 10 Finalist (Out of 75 Teams) 🌟</h2>
+  <p><i>An enterprise-grade, multi-agent AI orchestration engine that doesn't just detect broken CI/CD pipelines—it <b>heals</b> them seamlessly.</i></p>
+</div>
 
 ---
 
-## ✅ Project Status (Production Ready)
+## 🚀 The Vision: Zero-Touch Remediation
 
-| Phase | Status |
-|---|---|
-| LangGraph Multi-Agent State Machine | ✅ Complete |
-| RAG Memory Crystal (Cross-Repo Learning) | ✅ Complete |
-| Multi-Repo GitHub Auth & Federation | ✅ Complete |
-| Emergency Git Rollbacks (Zero Downtime) | ✅ Complete |
-| Sandbox Verification & Integration Testing | ✅ Complete |
-| SaaS Dashboard (Glassmorphic UI) | ✅ Complete |
+Continuous Integration (CI) is broken. We automated deployment but left debugging entirely manual, costing enterprises billions in lost developer velocity. 
+
+**Opalite OS** intercepts failed GitHub pipelines and deploys a synchronized swarm of **seven autonomous AI agents**. These agents ingest the repository, diagnose the mathematical fault, cross-reference previous organizational fixes (RAG), synthesize a code patch, prove it works in an isolated Sandbox environment, and deploy a ready-to-merge Pull Request.
+
+**All in under 60 seconds. Zero human intervention.**
 
 ---
 
-## 🛠️ Tech Stack
+## 🧠 The 7-Agent LangGraph Swarm Architecture
+
+Unlike basic LLM wrappers that hallucinate code, Opalite operates on a strictly serialized **LangGraph state-machine**, forcing the AI to prove its work deterministically before touching production infrastructure.
+
+1. **Scanner Agent:** Employs intelligent semantic-truncation to compress massive legacy codebases (like 3,000+ line Python files) into high-speed API context windows without crashing.
+2. **Diagnostician Agent:** Parses the Abstract Syntax Tree (AST) to isolate mathematical faults, streaming deterministic JSON payloads tracing syntax errors, missing dependencies, or logic limits (e.g., div-by-zero bounds).
+3. **Memory Crystal Agent (RAG):** Opalite isn't amnesiac. It queries a locally hosted Vector Database for Retrieval-Augmented Generation, referencing how the organization historically solved topologically similar bugs.
+4. **Solver Agent:** Powered by **Groq LPU (Llama-3.3-70b)**, it synthesizes a precise syntactic patch to address all anomalies simultaneously.
+5. **Verifier Agent (The Sandbox):** *The ultimate defensive moat.* The Verifier spins up an ephemeral, containerized Sandbox environment, injects the Solver's AI patch, and empirically executes the integration test suite (`pytest`) locally.
+6. **Critic Agent:** Scrutinizes algorithmic fixes against the deterministic test results. Only an absolute 'PASSED' consensus allows the graph to advance, eliminating blind hallucinations.
+7. **Deployer Agent:** Bundles the diffs, signs a secure branch, and injects a fully documented Pull Request directly into GitHub.
+
+---
+
+## 🛠️ Tech Stack & Interoperability
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.x, FastAPI, Uvicorn |
-| AI Model | Groq — Llama 3.3-70B (free) |
-| AI Orchestration | LangChain, LangGraph |
-| GitHub Integration | GitHub REST API (HTTPX) |
-| Frontend | Tailwind CSS, Vanilla JS, Jinja2 |
+| **Backend Engine** | Python 3, FastAPI, Uvicorn (Asynchronous State Handling) |
+| **AI Substrate** | Groq LPU (Llama 3.3-70B), LangChain, LangGraph |
+| **Data Streaming** | Advanced Async Server-Sent Events (SSE) with HTTP Keep-Alive protections |
+| **Integration** | Secure GitHub API Federation (HTTPX) |
+| **Frontend UI** | Vanilla CSS/JS, Tailwind CSS, Marked.js, Highlight.js for Real-Time Markdown rendering |
 
 ---
 
-## ⚙️ Setup & Run
+## 🏆 Hackathon Journey & Recognition
 
-### 1. Clone the repo
+Built under insane time constraints, Opalite OS was selected as a **Top 10 Finalist out of 75 highly competitive teams**. 
+
+While we didn't take home the ultimate grand prize, the overwhelming feedback from Judges, CTOs, and technical architects validated our core thesis: the future of DevOps is fully autonomous, agentic validation. We successfully demonstrated that AI can move beyond just "code completion" into closed-loop, deterministic infrastructure management.
+
+---
+
+## ⚙️ Setup & Run Local Engine
+
+### 1. Clone the repository
 ```bash
 git clone https://github.com/PDK45/CI-CD-Self-Healing-AI-Agent.git
 cd CI-CD-Self-Healing-AI-Agent/backend
 ```
 
-### 2. Create virtual environment & install dependencies
-```bash
-python -m venv venv
-.\venv\Scripts\Activate.ps1        # Windows
-# source venv/bin/activate         # Mac/Linux
-pip install -r requirements.txt
-```
-
-### 3. Configure environment variables
-Create a `.env` file inside the `backend/` folder:
+### 2. Environment Variables
+Create a `.env` in the `backend` directory mapping your API keys:
 ```env
-GROQ_API_KEY=your_groq_api_key_here
-GITHUB_TOKEN=your_github_personal_access_token_here
+GROQ_API_KEY=gsk_your_groq_key_here
+GITHUB_TOKEN=ghp_your_personal_access_token_here
 PORT=8000
 ```
 
-Get your **free Groq API key** at: [console.groq.com](https://console.groq.com) (takes 30 seconds)
-
-### 4. Run the server
+### 3. Initialize the Swarm
 ```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
 python main.py
 ```
 
-Open **[http://localhost:8000](http://localhost:8000)** — the dashboard will load with a live AI chat.
+### 4. Connect the Control Plane
+Open your browser to `http://localhost:8000` to interact with the frontend console, map your federated repositories, and trigger the AI Healing loop.
 
 ---
-
-## 📁 Project Structure
-
-```
-backend/
-├── main.py                    # FastAPI server — /chat (streaming) and /webhook endpoints
-├── requirements.txt
-├── .env                       # API keys (not committed)
-├── templates/
-│   └── index.html             # SaaS Dashboard UI
-└── agent/
-    ├── graph.py               # LangGraph state machine wiring
-    ├── nodes.py               # AI agents: Diagnostician, Researcher, Solver, Critic
-    ├── state.py               # Shared agent state schema
-    ├── context_builder.py     # CI log parser — extracts exact error traces
-    └── tools/
-        └── github_service.py  # GitHub API: fetch logs, create branches, open PRs
-```
-
----
-
-## 🔗 Connect a Real GitHub Repository
-
-1. Run the server with a public URL (e.g. via [ngrok](https://ngrok.com): `ngrok http 8000`)
-2. Go to your GitHub repo → **Settings → Webhooks → Add webhook**
-3. Set Payload URL to: `https://your-ngrok-url/webhook`
-4. Content type: `application/json`
-5. Select event: **Workflow runs**
-
-When a CI build fails, the agent loop triggers automatically and opens a PR with the fix.
+*Built with ❤️ for the future of developer velocity.*
