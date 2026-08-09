@@ -1,0 +1,73 @@
+# CD — runs when a fix lands on main (the agent's merge, or a human's).
+# This is what makes "after CI it auto-deploys" actually true: the agent's job ends at
+# "merge to main"; GitHub Actions owns the deploy, the health check, and the auto-rollback.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: production-deploy      # never run two prod deploys at once
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production      # add required reviewers here for a manual approval gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2         # need the previous commit so we can revert on failure
+
+      # --- 1. Ship it -------------------------------------------------------
+      # Swap this for your platform. A deploy hook works for Render/Railway/Vercel:
+      #   Settings -> Deploy Hook -> save the URL as the DEPLOY_HOOK secret.
+      - name: Trigger deployment
+        env:
+          DEPLOY_HOOK: ${{ secrets.DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "::error::DEPLOY_HOOK secret not set — nothing to deploy to."
+            exit 1
+          fi
+          echo "Triggering deploy..."
+          curl -fsS -X POST "$DEPLOY_HOOK"
+
+      # --- 2. Prove it's actually up ---------------------------------------
+      - name: Health check
+        id: health
+        env:
+          HEALTH_URL: ${{ secrets.HEALTH_URL }}   # e.g. https://your-app.onrender.com/health
+        run: |
+          if [ -z "$HEALTH_URL" ]; then
+            echo "No HEALTH_URL set; skipping health check."
+            exit 0
+          fi
+          echo "Waiting for $HEALTH_URL to report healthy..."
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Healthy after ${i} attempts."
+              exit 0
+            fi
+            echo "Attempt $i: got $code, retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::Service never became healthy."
+          exit 1
+
+      # --- 3. Auto-rollback if the deploy is unhealthy ---------------------
+      - name: Auto-rollback on failure
+        if: failure()
+        env:
+          DEPLOY_HOOK: ${{ secrets.DEPLOY_HOOK }}
+        run: |
+          echo "::warning::Deploy unhealthy — reverting the last commit on main."
+          git config user.name  "opalite-bot"
+          git config user.email "opalite-bot@users.noreply.github.com"
+          git revert --no-edit HEAD
+          git push origin main
+          # Re-trigger the platform to deploy the now-reverted (known-good) main.
+          if [ -n "$DEPLOY_HOOK" ]; then curl -fsS -X POST "$DEPLOY_HOOK" || true; fi

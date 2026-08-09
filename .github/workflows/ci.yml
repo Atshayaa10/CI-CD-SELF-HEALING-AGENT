@@ -1,0 +1,31 @@
+# CI — this is the check the agent's "CI Gate" waits on before it merges a fix.
+# Put a workflow like this in EVERY repo Opalite heals; without it, wait_for_checks()
+# reports "none" and the agent falls back to trusting only the local sandbox.
+name: CI
+
+on:
+  push:
+    branches: ["**"]        # run on the ai-fix/* branches too, so the gate has something to read
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest
+
+      - name: Run tests
+        run: pytest -v

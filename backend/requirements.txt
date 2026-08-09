@@ -1,0 +1,20 @@
+# --- Web / API ---
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+httpx>=0.27.0
+jinja2>=3.1.0
+
+# --- Agent orchestration ---
+langchain>=0.1.16
+langgraph>=0.0.38
+langchain-core>=0.1.45
+langchain-groq>=0.1.3        # Groq LPU (Llama 3.3-70B) — the actual LLM the code uses
+
+# --- Memory Crystal: real vector DB + embeddings (RAG) ---
+chromadb>=0.5.0              # persistent vector store; embeds with all-MiniLM-L6-v2 by default
+
+# --- Verifier sandbox ---
+docker>=7.1.0               # optional: runs the patch/pytest inside a container
+pytest>=8.0.0              # test runner invoked inside the sandbox

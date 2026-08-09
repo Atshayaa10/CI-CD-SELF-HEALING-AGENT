@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Opalite | CI/CD Auto-Healer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f1f5f9;
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .issue-card {
+            border-left: 4px solid #38bdf8;
+            background: linear-gradient(90deg, rgba(56, 189, 248, 0.05) 0%, rgba(15, 23, 42, 0) 100%);
+            transition: all 0.3s ease;
+        }
+
+        .issue-card:hover {
+            background: rgba(56, 189, 248, 0.1);
+            transform: translateX(4px);
+        }
+
+        .pulse-green { animation: pulse-green 2s infinite; }
+        .pulse-red { animation: pulse-red 2s infinite; }
+        .pulse-blue { animation: pulse-blue 1.5s infinite; }
+
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        @keyframes pulse-blue {
+            0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+        }
+
+        .badge-glow {
+            text-shadow: 0 0 8px currentColor;
+        }
+
+        #chat-window { scroll-behavior: smooth; }
+        .message-ai { background-color: rgba(56, 189, 248, 0.05); border-left: 2px solid #38bdf8; }
+        .message-sentinel { background-color: rgba(249, 115, 22, 0.05); border-left: 2px solid #f97316; }
+
+        /* Pipeline Visualizer Styles */
+        .pipeline-scroll::-webkit-scrollbar {
+            height: 6px;
+        }
+        .pipeline-scroll::-webkit-scrollbar-thumb {
+            background-color: #334155;
+            border-radius: 4px;
+        }
+        
+        .pipeline-card { transition: all 0.3s ease; }
+        .pipeline-card.active { border-color: #38bdf8; box-shadow: 0 0 15px rgba(56, 189, 248, 0.2); }
+        .pipeline-card.success { border-color: #10b981; }
+        .pipeline-card.error { border-color: #ef4444; }
+
+        .pipeline-line { transition: all 0.4s ease; background-color: #334155; }
+        .pipeline-line.active { background-color: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
+        .pipeline-line.success { background-color: #10b981; }
+        .pipeline-line.error { background-color: #ef4444; }
+
+        /* Syntax Highlighting overrides for dark theme */
+        .hljs { background: #0f172a !important; padding: 1rem !important; border-radius: 0.5rem; font-size: 0.75rem; }
+
+        /* Markdown rendering for chat answers (Tailwind reset strips list markers) */
+        .prose-chat ul { list-style: disc; padding-left: 1.25rem; margin: 0.4rem 0; }
+        .prose-chat ol { list-style: decimal; padding-left: 1.5rem; margin: 0.4rem 0; }
+        .prose-chat li { margin: 0.25rem 0; }
+        .prose-chat p { margin: 0.4rem 0; }
+        .prose-chat strong { color: #fff; font-weight: 700; }
+        .prose-chat a { color: #38bdf8; text-decoration: underline; }
+        .prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 700; color: #fff; margin: 0.6rem 0 0.3rem; }
+        .prose-chat code { background: #0f172a; padding: 0.1rem 0.35rem; border-radius: 0.25rem; font-size: 0.8em; color: #7dd3fc; }
+        .prose-chat pre { margin: 0.5rem 0; }
+        .prose-chat pre code { color: inherit; background: transparent; padding: 0; }
+    </style>
+</head>
+
+<body class="h-screen w-screen overflow-hidden flex flex-col items-center">
+
+    <!-- Top Navigation -->
+    <nav class="w-full glass-panel px-6 py-4 flex justify-between items-center z-10 shrink-0">
+        <div class="flex items-center gap-3">
+            <i class="fa-solid fa-robot text-blue-400 text-2xl"></i>
+            <h1 class="text-xl font-bold tracking-tight text-white">Opalite <span
+                    class="text-blue-400 font-light">Auto-Healer</span></h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <!-- Auth area is rendered by JS based on the login session -->
+            <div id="auth-area" class="flex items-center gap-3">
+                <a href="/auth/github/login"
+                   class="bg-slate-700 hover:bg-slate-600 transition-colors px-4 py-2 rounded-lg text-sm font-medium border border-slate-600 flex items-center gap-2">
+                    <i class="fa-brands fa-github text-white"></i> Login with GitHub
+                </a>
+                <a href="/auth/gitlab/login"
+                   class="bg-orange-600/90 hover:bg-orange-600 transition-colors px-4 py-2 rounded-lg text-sm font-medium border border-orange-500/50 flex items-center gap-2">
+                    <i class="fa-brands fa-gitlab text-white"></i> Login with GitLab
+                </a>
+            </div>
+            <span class="flex items-center gap-2 text-sm text-slate-300 ml-2">
+                <div class="w-2.5 h-2.5 bg-green-500 rounded-full pulse-green"></div>
+                Agent Online
+            </span>
+        </div>
+    </nav>
+
+    <!-- Main Dashboard Layout -->
+    <main class="w-full max-w-7xl flex flex-1 overflow-hidden gap-6 p-6">
+
+        <!-- Left Column: Pipeline Monitoring Sandbox -->
+        <section class="w-1/3 flex flex-col gap-6">
+            <!-- Active Monitors -->
+            <div class="glass-panel flex-1 rounded-xl p-5 flex flex-col gap-4 overflow-y-auto">
+                <h2 class="text-lg font-semibold border-b border-slate-700 pb-2 flex justify-between items-center">
+                    <span><i class="fa-brands fa-github mr-2"></i>Monitored Repos</span>
+                    <span class="text-xs font-normal text-slate-400" id="repo-count"></span>
+                </h2>
+
+                <button id="add-repos-btn" onclick="openRepoPicker()"
+                    class="hidden w-full bg-blue-600/20 hover:bg-blue-600 border border-blue-500/40 text-blue-300 hover:text-white transition text-xs py-2 rounded-lg font-bold flex justify-center items-center gap-2">
+                    <i class="fa-solid fa-plus"></i> Add / manage repositories
+                </button>
+
+                <div id="repo-list-container" class="flex flex-col gap-3">
+                    <!-- Default State -->
+                    <div class="text-center p-4 border border-dashed border-slate-600 rounded-lg opacity-60 mt-8">
+                        <i class="fa-solid fa-cloud-arrow-down text-2xl mb-2 text-slate-400"></i>
+                        <p class="text-xs text-slate-400">Log in with GitHub to sync and connect repositories.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Interactive Chat & Agent Log -->
+        <section class="w-2/3 glass-panel rounded-xl flex flex-col overflow-hidden relative">
+            <!-- Header -->
+            <div class="bg-slate-800/80 px-6 py-4 border-b border-slate-700 flex justify-between items-center z-10 shrink-0">
+                <h2 class="text-lg font-semibold"><i class="fa-solid fa-terminal mr-2"></i>Agent Console & Chat</h2>
+                <div class="flex gap-2 text-xs">
+                    <span class="px-2 py-1 bg-slate-700 rounded text-slate-300 border border-slate-600">Model: Llama-3.3-70B (Groq)</span>
+                </div>
+            </div>
+
+            <!-- CircleCI-Style Agentic Pipeline Viewer -->
+            <div class="w-full bg-slate-900 border-b border-slate-700 p-4 pb-6 overflow-x-auto pipeline-scroll shrink-0" id="pipeline-container">
+                <div class="flex items-center min-w-max px-2" id="pipeline-nodes">
+                    <!-- Nodes will be injected here by JS -->
+                    <div class="text-xs text-slate-500 italic"><i class="fa-solid fa-chart-line mr-2"></i>Agent Pipeline waiting for trigger...</div>
+                </div>
+            </div>
+
+            <!-- Chat Window (Scrollable area) -->
+            <div id="chat-window" class="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
+
+                <!-- Initial Greeting -->
+                <div class="message-ai p-4 rounded-lg text-sm text-slate-200 shadow-md">
+                    <p class="font-semibold text-blue-400 mb-1"><i class="fa-solid fa-robot mr-1"></i> Opalite OS</p>
+                    <p>System initialized. I am actively monitoring your webhook endpoints.</p>
+                    <p class="mt-2 text-slate-400">You can test the autonomous healing loop by clicking "Trigger Agent
+                        Healing" on the left, or you can converse with me directly using the chat box below.</p>
+                </div>
+
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-4 bg-slate-800/50 border-t border-slate-700">
+                <div class="mb-2 flex items-center gap-2">
+                    <label class="text-[10px] uppercase tracking-wider text-slate-500"><i class="fa-solid fa-book-open mr-1"></i>Repo context</label>
+                    <select id="chat-repo" class="bg-slate-900 border border-slate-600 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500 max-w-[240px] truncate">
+                        <option value="">General (no repo)</option>
+                    </select>
+                </div>
+                <form id="chat-form" class="relative flex items-center">
+                    <input type="text" id="chat-input"
+                        placeholder="Ask the agent about your code, pipelines, or request a custom fix..."
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg pl-4 pr-12 py-3 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors shadow-inner"
+                        autocomplete="off">
+                    <button type="submit" class="absolute right-2 text-slate-400 hover:text-blue-400 transition p-2">
+                        <i class="fa-solid fa-paper-plane text-lg"></i>
+                    </button>
+                </form>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Repo Picker Modal: choose which repos to connect -->
+    <div id="repo-picker-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div class="glass-panel rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
+            <div class="flex justify-between items-center px-6 py-4 border-b border-slate-700 shrink-0">
+                <h3 class="text-base font-bold text-white"><i class="fa-brands fa-github mr-2"></i>Select repositories to connect</h3>
+                <button onclick="closeRepoPicker()" class="text-slate-400 hover:text-white transition"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="px-6 py-3 border-b border-slate-700 shrink-0">
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
+                    <input type="text" id="repo-search" oninput="renderPickerList()" placeholder="Filter repositories..."
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+            <div id="repo-picker-list" class="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-1.5"></div>
+            <div class="px-6 py-4 border-t border-slate-700 flex justify-between items-center shrink-0">
+                <span class="text-xs text-slate-400"><span id="picker-selected-count">0</span> connected</span>
+                <button onclick="closeRepoPicker()" class="bg-blue-600 hover:bg-blue-500 transition px-5 py-2 rounded-lg text-sm font-bold text-white">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatForm = document.getElementById('chat-form');
+        const chatInput = document.getElementById('chat-input');
+        const chatWindow = document.getElementById('chat-window');
+
+        // Pipeline Viewer Logic
+        const pipelineSteps = [
+            { id: 'scan', label: 'Scanner', icon: 'fa-search' },
+            { id: 'diagnose', label: 'Diagnostician', icon: 'fa-stethoscope' },
+            { id: 'memory', label: 'Memory Fetch', icon: 'fa-brain' },
+            { id: 'solve', label: 'Solver', icon: 'fa-wand-sparkles' },
+            { id: 'verify', label: 'Verifier (Test)', icon: 'fa-flask-vial' },
+            { id: 'critic', label: 'Critic', icon: 'fa-gavel' },
+            { id: 'push', label: 'Git Commit', icon: 'fa-code-branch' },
+            { id: 'deploy', label: 'Deploy PR', icon: 'fa-rocket' },
+            { id: 'complete', label: 'Complete', icon: 'fa-check-circle' }
+        ];
+
+        const stepIcons = {
+            'scan': 'fa-magnifying-glass',
+            'fetch': 'fa-download',
+            'memory': 'fa-brain',
+            'diagnose': 'fa-stethoscope',
+            'solve': 'fa-code',
+            'verify': 'fa-flask-vial',
+            'critic': 'fa-gavel',
+            'push': 'fa-code-branch',
+            'deploy': 'fa-rocket',
+            'complete': 'fa-check-circle',
+            'error': 'fa-triangle-exclamation'
+        };
+
+        function initPipelineViewer() {
+            const container = document.getElementById('pipeline-nodes');
+            container.innerHTML = '';
+            
+            pipelineSteps.forEach((step, index) => {
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'flex items-center shrink-0';
+                
+                const card = document.createElement('div');
+                card.id = `pipeline-node-${step.id}`;
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2 w-[160px] shadow-sm ml-2 mr-2 opacity-50 relative';
+                
+                card.innerHTML = `
+                    <div class="h-6 w-6 rounded-full border border-slate-600 flex items-center justify-center bg-slate-900 status-indicator shrink-0">
+                        <i class="fa-solid fa-clock text-[10px] text-slate-500"></i>
+                    </div>
+                    <div class="flex flex-col min-w-0">
+                        <span class="text-xs font-bold text-slate-300 truncate"><i class="fa-solid ${step.icon} mr-1 opacity-70"></i>${step.label}</span>
+                        <span class="text-[9px] text-slate-500 uppercase status-text tracking-wider truncate">Waiting</span>
+                    </div>
+                `;
+                nodeDiv.appendChild(card);
+                
+                if (index < pipelineSteps.length - 1) {
+                    const line = document.createElement('div');
+                    line.id = `pipeline-edge-${step.id}`;
+                    line.className = 'w-8 h-0.5 pipeline-line rounded-full';
+                    nodeDiv.appendChild(line);
+                }
+                
+                container.appendChild(nodeDiv);
+            });
+        }
+        
+        // Initialize the empty pipeline map on load
+        initPipelineViewer();
+
+        function updateLangGraphState(step, status, message) {
+            // Find current step index
+            const stepIdx = pipelineSteps.findIndex(s => s.id === step);
+            if(stepIdx === -1) return;
+            
+            // Mark all preceding steps as done (only if moving forward/success)
+            if (status !== 'error' && status !== 'failed') {
+               for(let i=0; i<stepIdx; i++) {
+                   const sid = pipelineSteps[i].id;
+                   const pCard = document.getElementById(`pipeline-node-${sid}`);
+                   const pEdge = document.getElementById(`pipeline-edge-${sid}`);
+                   
+                   pCard.className = 'pipeline-card flex items-center gap-3 bg-slate-800 border border-emerald-500/50 rounded-lg px-4 py-2 w-[160px] shadow-md ml-2 mr-2 opacity-100 success';
+                   pCard.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-check text-[10px] text-emerald-400 font-bold"></i>';
+                   pCard.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-emerald-500 flex items-center justify-center bg-emerald-500/10 status-indicator';
+                   pCard.querySelector('.status-text').textContent = 'DONE';
+                   pCard.querySelector('.status-text').className = 'text-[9px] text-emerald-400 font-bold uppercase status-text tracking-wider truncate';
+                   
+                   if (pEdge) pEdge.className = 'w-8 h-px pipeline-line rounded-full success';
+               }
+            }
+            
+            const card = document.getElementById(`pipeline-node-${step}`);
+            const edge = document.getElementById(`pipeline-edge-${step}`);
+            
+            if (status === 'running') {
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-900 border border-blue-500 rounded-lg px-4 py-2 w-[160px] shadow-lg ml-2 mr-2 opacity-100 active';
+                card.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-spinner fa-spin text-[10px] text-blue-400"></i>';
+                card.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-blue-500 flex items-center justify-center bg-blue-500/20 status-indicator';
+                card.querySelector('.status-text').textContent = 'RUNNING';
+                card.querySelector('.status-text').className = 'text-[9px] text-blue-400 font-black uppercase status-text tracking-wider truncate pulse-blue';
+                
+                // Auto scroll horizontally to current node
+                const container = document.getElementById('pipeline-container');
+                container.scrollTo({ left: card.offsetLeft - 100, behavior: 'smooth' });
+                
+                if (edge) edge.className = 'w-8 h-1 pipeline-line rounded-full active pulse-blue';
+                
+            } else if (status === 'done' || status === 'success' || status === 'clean') {
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-800 border-emerald-500/50 rounded-lg px-4 py-2 w-[160px] shadow-md ml-2 mr-2 opacity-100 success';
+                card.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-check text-[10px] text-emerald-400 font-bold"></i>';
+                card.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-emerald-500 flex items-center justify-center bg-emerald-500/10 status-indicator';
+                card.querySelector('.status-text').textContent = 'DONE';
+                card.querySelector('.status-text').className = 'text-[9px] text-emerald-400 font-bold uppercase status-text tracking-wider truncate';
+                
+                if (edge) edge.className = 'w-8 h-px pipeline-line rounded-full success';
+                
+            } else if (status === 'error' || status === 'failed') {
+                card.className = 'pipeline-card flex items-center gap-3 bg-slate-900 border border-red-500 rounded-lg px-4 py-2 w-[160px] shadow-lg ml-2 mr-2 opacity-100 error pulse-red';
+                card.querySelector('.status-indicator').innerHTML = '<i class="fa-solid fa-xmark text-[10px] text-red-400 font-bold"></i>';
+                card.querySelector('.status-indicator').className = 'h-6 w-6 rounded-full border border-red-500 flex items-center justify-center bg-red-500/20 status-indicator';
+                card.querySelector('.status-text').textContent = 'FAILED';
+                card.querySelector('.status-text').className = 'text-[9px] text-red-500 font-black uppercase status-text tracking-wider truncate';
+                
+                if (edge) edge.className = 'w-8 h-px pipeline-line rounded-full error';
+            }
+        }
+
+        // Helper to append a message to the UI
+        function appendMessage(sender, text, isHtml = false) {
+            const div = document.createElement('div');
+            const isAI = sender === 'AI';
+
+            div.className = `p-4 rounded-lg text-sm text-slate-200 shadow-md ${isAI ? 'message-ai' : 'message-user'}`;
+
+            const header = document.createElement('p');
+            header.className = `font-semibold mb-1 ${isAI ? 'text-blue-400' : 'text-slate-400'}`;
+            header.innerHTML = isAI ? '<i class="fa-solid fa-robot mr-1"></i> Opalite OS' : '<i class="fa-solid fa-user mr-1"></i> Developer';
+
+            const content = document.createElement('div');
+            if (isHtml) {
+                content.innerHTML = text;
+            } else {
+                content.textContent = text;
+            }
+
+            div.appendChild(header);
+            div.appendChild(content);
+            chatWindow.appendChild(div);
+
+            // Auto scroll to bottom
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+            return content; // Return the text container so we can stream into it
+        }
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const message = chatInput.value.trim();
+            if (!message) return;
+
+            // Clear input and show user message
+            chatInput.value = '';
+            appendMessage('User', message);
+
+            // Create an empty AI message block to stream text into
+            const aiTextContainer = appendMessage('AI', '...');
+            const selectedRepo = (document.getElementById('chat-repo') || {}).value || "";
+
+            try {
+                // Fetch from the streaming FastAPI backend, grounded on the selected repo
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message, repo: selectedRepo })
+                });
+
+                if (!response.body) throw new Error("ReadableStream not supported.");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let fullText = "";
+                let cleared = false;
+
+                // Stream the chunks in and render as Markdown (bullet points, code, etc.)
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    if (!cleared) { aiTextContainer.innerHTML = ""; cleared = true; }
+
+                    fullText += chunk;
+                    aiTextContainer.className = "prose-chat text-sm text-slate-200 leading-relaxed";
+                    aiTextContainer.innerHTML = marked.parse(fullText);
+                    chatWindow.scrollTop = chatWindow.scrollHeight;
+                }
+
+                // Syntax-highlight any code blocks in the final answer
+                aiTextContainer.querySelectorAll('pre code').forEach((b) => hljs.highlightElement(b));
+            } catch (error) {
+                aiTextContainer.textContent = "Error communicating with the agent: " + error.message;
+            }
+        });
+
+        // ============================================================
+        //  GitHub OAuth session + repo connection
+        // ============================================================
+        let allRepos = [];  // every repo the user can access
+        let connectedRepos = new Set(JSON.parse(localStorage.getItem('opalite_connected') || '[]'));
+
+        function saveConnected() {
+            localStorage.setItem('opalite_connected', JSON.stringify([...connectedRepos]));
+        }
+
+        // Keep the chat "Repo context" dropdown in sync with connected repos.
+        function updateChatRepoOptions() {
+            const sel = document.getElementById('chat-repo');
+            if (!sel) return;
+            const prev = sel.value;
+            const connected = [...connectedRepos];
+            sel.innerHTML = '<option value="">General (no repo)</option>' +
+                connected.map(r => `<option value="${r}">${r}</option>`).join('');
+            // keep prior selection if still connected, else default to the first connected repo
+            if (connected.includes(prev)) sel.value = prev;
+            else if (connected.length) sel.value = connected[0];
+        }
+
+        // Render the nav auth area based on session
+        function renderAuthArea(session) {
+            const area = document.getElementById('auth-area');
+            if (session.authenticated) {
+                const u = session.user || {};
+                const provider = session.provider || 'github';
+                const provIcon = provider === 'gitlab' ? 'fa-gitlab text-orange-400' : 'fa-github';
+                const avatar = u.avatar_url
+                    ? `<img src="${u.avatar_url}" class="w-6 h-6 rounded-full border border-slate-600">`
+                    : `<i class="fa-brands ${provIcon}"></i>`;
+                area.innerHTML = `
+                    <div class="flex items-center gap-2 bg-slate-800/60 border border-slate-600 rounded-lg pl-2 pr-3 py-1.5">
+                        ${avatar}
+                        <span class="text-sm text-slate-200">${u.login || 'user'}</span>
+                        <span class="text-[9px] uppercase tracking-wider text-slate-400"><i class="fa-brands ${provIcon}"></i></span>
+                    </div>
+                    <button onclick="logout()" class="text-slate-400 hover:text-red-400 transition text-sm px-2 py-1.5" title="Log out">
+                        <i class="fa-solid fa-right-from-bracket"></i>
+                    </button>`;
+                document.getElementById('add-repos-btn').classList.remove('hidden');
+            } else {
+                area.innerHTML = `
+                    <a href="/auth/github/login"
+                       class="bg-slate-700 hover:bg-slate-600 transition-colors px-4 py-2 rounded-lg text-sm font-medium border border-slate-600 flex items-center gap-2">
+                        <i class="fa-brands fa-github text-white"></i> Login with GitHub
+                    </a>
+                    <a href="/auth/gitlab/login"
+                       class="bg-orange-600/90 hover:bg-orange-600 transition-colors px-4 py-2 rounded-lg text-sm font-medium border border-orange-500/50 flex items-center gap-2">
+                        <i class="fa-brands fa-gitlab text-white"></i> Login with GitLab
+                    </a>`;
+                document.getElementById('add-repos-btn').classList.add('hidden');
+            }
+        }
+
+        async function logout() {
+            await fetch('/logout', { method: 'POST' });
+            connectedRepos = new Set();
+            saveConnected();
+            location.href = '/';
+        }
+
+        async function loadRepos() {
+            const res = await fetch('/api/repos');
+            if (res.status === 401) return false;
+            const data = await res.json();
+            if (data.success) {
+                allRepos = data.repos;
+                return true;
+            }
+            return false;
+        }
+
+        // ---- Repo picker modal ----
+        function openRepoPicker() {
+            document.getElementById('repo-picker-modal').classList.remove('hidden');
+            renderPickerList();
+        }
+        function closeRepoPicker() {
+            document.getElementById('repo-picker-modal').classList.add('hidden');
+            renderConnectedRepos();
+        }
+        function toggleConnect(name) {
+            if (connectedRepos.has(name)) connectedRepos.delete(name);
+            else connectedRepos.add(name);
+            saveConnected();
+            renderPickerList();
+        }
+        function renderPickerList() {
+            const list = document.getElementById('repo-picker-list');
+            const q = (document.getElementById('repo-search').value || '').toLowerCase();
+            const filtered = allRepos.filter(r => r.name.toLowerCase().includes(q));
+            document.getElementById('picker-selected-count').textContent = connectedRepos.size;
+
+            if (!filtered.length) {
+                list.innerHTML = '<p class="text-center text-slate-500 text-xs py-6">No matching repositories.</p>';
+                return;
+            }
+            list.innerHTML = '';
+            filtered.forEach(repo => {
+                const isOn = connectedRepos.has(repo.name);
+                const lock = repo.private ? '<i class="fa-solid fa-lock text-slate-500 text-[9px] ml-1"></i>' : '';
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.onclick = () => toggleConnect(repo.name);
+                row.className = `w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border transition text-left ${isOn ? 'bg-blue-600/15 border-blue-500/50' : 'bg-slate-800/40 border-slate-700/50 hover:border-slate-500'}`;
+                row.innerHTML = `
+                    <div class="flex flex-col min-w-0">
+                        <span class="text-sm text-slate-200 truncate">${repo.name.split('/')[1]} ${lock}</span>
+                        <span class="text-[9px] text-slate-500 uppercase tracking-widest">${repo.name.split('/')[0]}</span>
+                    </div>
+                    <span class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center border ${isOn ? 'bg-blue-500 border-blue-500' : 'border-slate-500'}">
+                        ${isOn ? '<i class="fa-solid fa-check text-[10px] text-white"></i>' : ''}
+                    </span>`;
+                list.appendChild(row);
+            });
+        }
+
+        // ---- Connected (monitored) repos with actions ----
+        function renderConnectedRepos() {
+            const container = document.getElementById('repo-list-container');
+            const connected = allRepos.filter(r => connectedRepos.has(r.name));
+            document.getElementById('repo-count').textContent = connected.length ? connected.length + " connected" : "";
+            updateChatRepoOptions();
+            container.innerHTML = '';
+
+            if (!connected.length) {
+                container.innerHTML = `
+                    <div class="text-center p-4 border border-dashed border-slate-600 rounded-lg opacity-70 mt-6">
+                        <i class="fa-solid fa-plug-circle-plus text-2xl mb-2 text-slate-400"></i>
+                        <p class="text-xs text-slate-400">No repositories connected yet.</p>
+                        <button onclick="openRepoPicker()" class="mt-3 text-xs text-blue-400 hover:text-blue-300 font-bold">Select repositories to connect →</button>
+                    </div>`;
+                return;
+            }
+
+            connected.forEach(repo => {
+                const date = new Date(repo.updated_at).toLocaleDateString();
+                const visibility = repo.private ? '<i class="fa-solid fa-lock text-slate-500 text-[10px] ml-1"></i>' : '';
+                const repoDiv = document.createElement('div');
+                repoDiv.className = "bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 hover:border-blue-500/50 hover:bg-slate-800/80 transition-all cursor-pointer group shadow-sm relative overflow-hidden";
+                repoDiv.innerHTML = `
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="flex flex-col">
+                            <span class="font-bold text-slate-200 text-sm truncate w-40 group-hover:text-blue-300 transition-colors">${repo.name.split('/')[1]} ${visibility}</span>
+                            <span class="text-[9px] text-slate-500 uppercase tracking-widest">${repo.name.split('/')[0]}</span>
+                        </div>
+                        <button onclick="event.stopPropagation(); toggleConnect('${repo.name}'); renderConnectedRepos();" title="Disconnect"
+                            class="text-slate-500 hover:text-red-400 transition text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                    <div class="flex items-center gap-3 text-[10px] text-slate-400 mt-3">
+                        <span><i class="fa-regular fa-clock mr-1 opacity-50"></i> ${date}</span>
+                        <span><i class="fa-solid fa-code-branch mr-1 opacity-50"></i> main</span>
+                    </div>
+                    <div class="mt-4 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all transform translate-y-2 group-hover:translate-y-0">
+                        <button onclick="triggerHeal('${repo.name}')"
+                            class="w-full bg-blue-600 hover:bg-blue-500 transition text-[10px] py-1.5 rounded-lg text-white flex justify-center items-center gap-2 shadow-lg shadow-blue-900/40 font-bold">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> AI HEAL REPO
+                        </button>
+                        <div class="grid grid-cols-2 gap-2">
+                             <button onclick="triggerMockWebhook('${repo.name}')"
+                                class="bg-slate-700 hover:bg-slate-600 transition text-[10px] py-1.5 rounded-lg text-slate-200 flex justify-center items-center gap-2">
+                                <i class="fa-solid fa-bug"></i> MOCK CI
+                            </button>
+                            <button onclick="triggerRollback('${repo.name}')"
+                                class="bg-orange-600/20 hover:bg-orange-600 transition text-[10px] py-1.5 rounded-lg text-orange-400 hover:text-white border border-orange-500/30 flex justify-center items-center gap-2 font-bold">
+                                <i class="fa-solid fa-backward-fast"></i> ROLLBACK
+                            </button>
+                        </div>
+                    </div>
+                    <div class="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                        <i class="fa-brands fa-github text-6xl"></i>
+                    </div>`;
+                container.appendChild(repoDiv);
+            });
+        }
+
+        // ---- Boot: check session, then hydrate repos ----
+        async function initGithub() {
+            // Surface OAuth callback outcome, then clean the URL.
+            const params = new URLSearchParams(location.search);
+            if (params.get('auth') === 'success') {
+                appendMessage('AI', '✅ Logged in with GitHub. Click <b class="text-blue-300">Add / manage repositories</b> to connect the repos you want the agent to heal.', true);
+            } else if (params.get('auth') && params.get('auth') !== 'success') {
+                appendMessage('AI', '⚠️ GitHub login failed or was cancelled. Please try again.', true);
+            }
+            if (params.get('auth')) history.replaceState({}, '', '/');
+
+            let session;
+            try {
+                session = await (await fetch('/api/session')).json();
+            } catch (e) {
+                session = { authenticated: false };
+            }
+            renderAuthArea(session);
+
+            if (session.authenticated) {
+                const ok = await loadRepos();
+                if (ok) renderConnectedRepos();
+            }
+        }
+
+        window.addEventListener('load', initGithub);
+
+        // Mock Webhook (Original)
+        async function triggerMockWebhook(repo) {
+            appendMessage('User', `SYSTEM COMMAND: Initiating mock GitHub Webhook for failed action on repository '${repo}'`);
+            const aiTextContainer = appendMessage('AI', 'Transmitting mock webhook payload...');
+            chatInput.disabled = true;
+            try {
+                const response = await fetch('/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-GitHub-Event': 'workflow_run' },
+                    body: JSON.stringify({
+                        action: "completed",
+                        workflow_run: { id: 99999, conclusion: "failure", head_sha: "a1b2c3d" },
+                        repository: { full_name: repo }
+                    })
+                });
+                const data = await response.json();
+                aiTextContainer.textContent = `Webhook response: ${data.message}`;
+            } catch (err) {
+                aiTextContainer.textContent = "Error: " + err.message;
+            } finally {
+                chatInput.disabled = false;
+            }
+        }
+
+        // Live Autonomous Healing Demo
+        async function triggerHeal(repoName) {
+            appendMessage('User', `SYSTEM COMMAND: Initiate full autonomous healing sequence on repository '${repoName}'`);
+            const aiTextContainer = appendMessage('AI', 'Initializing LangGraph healing sequence...');
+            chatInput.disabled = true;
+
+            try {
+                const response = await fetch('/heal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo: repoName })
+                });
+
+                if (!response.body) throw new Error("ReadableStream not supported.");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = "";
+                let hasClearedInitial = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Parse Server-Sent Events (SSE)
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop(); // keep remainder
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (!hasClearedInitial) {
+                                    aiTextContainer.textContent = "";
+                                    hasClearedInitial = true;
+                                }
+
+                                // Create a visual step entry
+                                const stepDiv = document.createElement('div');
+                                stepDiv.className = "mt-3 p-4 bg-slate-900/60 rounded-xl border border-slate-700/50 shadow-sm transition-all animate-in fade-in slide-in-from-left-4 duration-500 issue-card";
+
+                                // Dynamic coloring based on step and status
+                                let statusColor = "text-blue-400";
+                                let icon = stepIcons[data.step] || 'fa-circle-dot';
+                                
+                                if (data.status === "done" || data.status === "success" || data.status === "clean") statusColor = "text-emerald-400";
+                                if (data.status === "error" || data.status === "failed") statusColor = "text-red-400";
+                                if (data.step === "memory") {
+                                    statusColor = "text-purple-400";
+                                    stepDiv.style.borderLeftColor = "#a855f7"; // purple-500
+                                    icon = "fa-brain";
+                                }
+                                if (data.step === "solve") {
+                                    statusColor = "text-blue-400";
+                                    stepDiv.style.borderLeftColor = "#3b82f6"; // blue-500
+                                    icon = "fa-wand-sparkles";
+                                }
+
+                                let msg = data.message;
+                                // Handle Technical Issues Badge in a cooler way
+                                if (data.step === 'diagnose' && msg.includes("Detected")) {
+                                    msg = msg.replace("Detected", "<b>AGENT PERCEPTION:</b> Detected");
+                                    stepDiv.style.borderLeftColor = "#ef4444"; // red-500
+                                }
+
+                                let contentHtml = `
+                                    <div class="flex items-center gap-3 mb-2">
+                                        <div class="h-8 w-8 rounded-lg bg-slate-800 flex items-center justify-center border border-slate-700">
+                                            <i class="fa-solid ${icon} ${statusColor} text-sm"></i>
+                                        </div>
+                                        <div class="flex-1">
+                                            <p class="text-[10px] font-bold uppercase tracking-widest ${statusColor} opacity-70 mb-0.5">${data.step}</p>
+                                            <p class="text-slate-200 text-xs font-semibold">${msg}</p>
+                                        </div>
+                                    </div>
+                                `;
+
+                                if (data.details) {
+                                    if (data.step === "memory" && data.status === "done") {
+                                        contentHtml += `
+                                            <div class="mt-3 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[10px] text-purple-200 italic">
+                                                <i class="fa-solid fa-sparkles mr-2"></i> RAG Match: Using historical fix pattern found in local memory crystal...
+                                            </div>
+                                        `;
+                                    }
+                                    
+                                    // Custom visualization for Diagnostician JSON
+                                    if (data.step === 'diagnose') {
+                                        try {
+                                            const issueData = JSON.parse(data.details);
+                                            contentHtml += `
+                                            <div class="mt-3 grid grid-cols-2 gap-3 pb-2 border-b border-red-500/20">
+                                                <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                                                    <span class="text-[9px] text-red-400 font-bold uppercase tracking-wider block mb-1">Issue Type</span>
+                                                    <span class="text-xs text-white">${issueData.issue_category || issueData.issue_type || 'Unknown'}</span>
+                                                </div>
+                                                <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                                                    <span class="text-[9px] text-red-400 font-bold uppercase tracking-wider block mb-1">Broken File</span>
+                                                    <span class="text-xs text-white font-mono break-all">${issueData.broken_file || 'N/A'}</span>
+                                                </div>
+                                            </div>
+                                            <div class="mt-2 text-xs text-slate-300 bg-slate-900 p-3 rounded-lg border border-slate-800">
+                                                <span class="text-[9px] text-slate-500 font-bold uppercase tracking-wider block mb-1">Summary</span>
+                                                ${issueData.error_summary || 'N/A'}
+                                            </div>`;
+                                        } catch (e) {
+                                            const safeDetails = data.details.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                            contentHtml += `<pre class="mt-2 text-[10px] text-slate-400 overflow-x-auto p-2 rounded">${safeDetails}</pre>`;
+                                        }
+                                    } 
+                                    // Custom visualization for Code Solver
+                                    else if (data.step === 'solve' || data.step === 'critic') {
+                                        // Render markdown with Marked.js
+                                        const renderedMd = marked.parse(data.details);
+                                        contentHtml += `
+                                        <details open class="mt-3 bg-slate-950/80 rounded-lg p-3 border border-slate-800 group">
+                                            <summary class="text-[10px] text-blue-400 font-bold select-none cursor-pointer mb-2">
+                                                <i class="fa-solid fa-code"></i> AGENT CODE PATCH
+                                            </summary>
+                                            <div class="text-[11px] text-slate-300 font-mono leading-relaxed overflow-x-auto">
+                                                ${renderedMd}
+                                            </div>
+                                        </details>`;
+                                    } 
+                                    else {
+                                        // Default workspace data
+                                        const safeDetails = data.details.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                                        contentHtml += `
+                                        <details class="mt-3 bg-slate-950/50 rounded-lg p-2 border border-slate-800 cursor-pointer group">
+                                            <summary class="text-[10px] text-slate-500 font-bold hover:text-slate-300 select-none flex items-center gap-2">
+                                                <i class="fa-solid fa-square-plus group-open:hidden"></i>
+                                                <i class="fa-solid fa-square-minus hidden group-open:block"></i>
+                                                AGENT WORKSPACE DATA
+                                            </summary>
+                                            <pre class="mt-2 text-[10px] text-slate-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed bg-slate-900 p-2 rounded">${safeDetails}</pre>
+                                        </details>`;
+                                    }
+                                }
+                                if (data.pr_url) {
+                                    contentHtml += `
+                                        <a href="${data.pr_url}" target="_blank" class="mt-3 w-full bg-emerald-600 hover:bg-emerald-500 transition text-[10px] py-2 rounded-lg text-white flex justify-center items-center gap-2 font-bold shadow-lg shadow-emerald-900/30">
+                                            <i class="fa-solid fa-up-right-from-square"></i> VIEW AUTONOMOUS PULL REQUEST
+                                        </a>`;
+                                }
+
+                                stepDiv.innerHTML = contentHtml;
+                                aiTextContainer.appendChild(stepDiv);
+                                
+                                // Apply syntax highlighting to new code blocks
+                                stepDiv.querySelectorAll('pre code').forEach((block) => {
+                                    hljs.highlightElement(block);
+                                });
+
+                                chatWindow.scrollTop = chatWindow.scrollHeight;
+
+                                // Update the visualizer
+                                updateLangGraphState(data.step, data.status, data.message);
+
+                            } catch (e) {
+                                console.error("Error parsing SSE JSON:", e, line);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = "mt-2 p-3 bg-red-900/20 text-red-400 rounded border border-red-500 font-mono text-xs";
+                errorDiv.textContent = "Fatal stream error: " + err.message;
+                aiTextContainer.appendChild(errorDiv);
+            } finally {
+                chatInput.disabled = false;
+            }
+        }
+
+        // Emergency Rollback Trigger
+        async function triggerRollback(repoName) {
+            appendMessage('User', `SYSTEM COMMAND: Initiate EMERGENCY ROLLBACK on repository '${repoName}'`);
+            const aiTextContainer = appendMessage('AI', 'Connecting to GitHub API to revert commit history safely...');
+            chatInput.disabled = true;
+
+            try {
+                const response = await fetch('/rollback', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo: repoName })
+                });
+
+                if (!response.body) throw new Error("ReadableStream not supported.");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buffer = "";
+                let hasClearedInitial = false;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop(); 
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (!hasClearedInitial) {
+                                    aiTextContainer.textContent = "";
+                                    hasClearedInitial = true;
+                                }
+
+                                const stepDiv = document.createElement('div');
+                                stepDiv.className = "mt-3 p-4 bg-orange-950/20 rounded-xl border border-orange-500/30 shadow-lg animate-in zoom-in duration-500";
+
+                                let statusColor = "text-orange-400";
+                                if (data.status === "done") statusColor = "text-green-400";
+                                if (data.status === "error" || data.status === "failed") statusColor = "text-red-400";
+                                if (data.status === "success") statusColor = "text-orange-300 font-bold";
+
+                                let contentHtml = `
+                                    <div class="flex items-center gap-3">
+                                        <div class="h-10 w-10 rounded-full bg-orange-600/20 flex items-center justify-center border border-orange-500/50">
+                                            <i class="fa-solid fa-shield-halved text-orange-400 pulse-red"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 opacity-80">Sentinel Intervention</p>
+                                            <p class="text-slate-100 text-sm font-bold">${data.message}</p>
+                                        </div>
+                                    </div>
+                                `;
+
+                                if (data.pr_url) {
+                                    contentHtml += `<br><a href="${data.pr_url}" target="_blank" class="text-orange-400 underline mt-2 inline-block"><i class="fa-solid fa-code-commit"></i> View Rollback Commit</a>`;
+                                }
+
+                                stepDiv.innerHTML = contentHtml;
+                                aiTextContainer.appendChild(stepDiv);
+                                chatWindow.scrollTop = chatWindow.scrollHeight;
+
+                                updateLangGraphState(data.step, data.status, data.message);
+
+                            } catch (e) {
+                                console.error("Error parsing SSE JSON:", e, line);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = "mt-2 p-3 bg-red-900/20 text-red-400 rounded border border-red-500 font-mono text-xs";
+                errorDiv.textContent = "Fatal rollback stream error: " + err.message;
+                aiTextContainer.appendChild(errorDiv);
+            } finally {
+                chatInput.disabled = false;
+            }
+        }
+    </script>
+</body>
+
+</html>

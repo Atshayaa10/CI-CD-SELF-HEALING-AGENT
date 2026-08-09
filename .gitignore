@@ -1,0 +1,33 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Environment variables - NEVER commit these
+.env
+*.env
+!.env.example
+
+# Agent runtime data
+backend/memory_crystal.json
+backend/memory_crystal_db/
+backend/deployments/
+temp_repo/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
